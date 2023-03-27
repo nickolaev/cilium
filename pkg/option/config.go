@@ -124,6 +124,9 @@ const (
 	// direct routing mode (only required by BPF NodePort)
 	DirectRoutingDevice = "direct-routing-device"
 
+	// MultiHomingDevices ...
+	MultiHomingDevices = "multi-homing-devices"
+
 	// LBDevInheritIPAddr is device name which IP addr is inherited by devices
 	// running BPF loadbalancer program
 	LBDevInheritIPAddr = "bpf-lb-dev-ip-addr-inherit"
@@ -1313,6 +1316,7 @@ type DaemonConfig struct {
 	devicesMu           lock.RWMutex // Protects devices
 	devices             []string     // bpf_host device
 	DirectRoutingDevice string       // Direct routing device (used by BPF NodePort and BPF Host Routing)
+	MultiHomingDevices  []string     // Multi-homing devices
 	LBDevInheritIPAddr  string       // Device which IP addr used by bpf_host devices
 	EnableXDPPrefilter  bool         // Enable XDP-based prefiltering
 	XDPMode             string       // XDP mode, values: { xdpdrv | xdpgeneric | none }
@@ -2501,6 +2505,11 @@ func (c *DaemonConfig) EndpointStatusIsEnabled(option string) bool {
 	return ok
 }
 
+// MultiHomingEnabled returns true if multi-homing is enabled.
+func (c *DaemonConfig) MultiHomingEnabled() bool {
+	return len(c.MultiHomingDevices) > 0
+}
+
 // LocalClusterName returns the name of the cluster Cilium is deployed in
 func (c *DaemonConfig) LocalClusterName() string {
 	return c.ClusterName
@@ -2799,6 +2808,7 @@ func (c *DaemonConfig) Populate() {
 	c.Debug = viper.GetBool(DebugArg)
 	c.DebugVerbose = viper.GetStringSlice(DebugVerbose)
 	c.DirectRoutingDevice = viper.GetString(DirectRoutingDevice)
+	c.MultiHomingDevices = viper.GetStringSlice(MultiHomingDevices)
 	c.LBDevInheritIPAddr = viper.GetString(LBDevInheritIPAddr)
 	c.EnableIPv4 = viper.GetBool(EnableIPv4Name)
 	c.EnableIPv6 = viper.GetBool(EnableIPv6Name)

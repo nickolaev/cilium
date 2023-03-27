@@ -36,17 +36,18 @@ var (
 )
 
 type addresses struct {
-	ipv4Loopback      net.IP
-	ipv4Address       net.IP
-	ipv4RouterAddress net.IP
-	ipv4NodePortAddrs map[string]net.IP // iface name => ip addr
-	ipv4MasqAddrs     map[string]net.IP // iface name => ip addr
-	ipv6Address       net.IP
-	ipv6RouterAddress net.IP
-	ipv6NodePortAddrs map[string]net.IP // iface name => ip addr
-	ipv4AllocRange    *cidr.CIDR
-	ipv6AllocRange    *cidr.CIDR
-	routerInfo        RouterInfo
+	ipv4Loopback               net.IP
+	ipv4Address                net.IP
+	ipv4RouterAddress          net.IP
+	ipv4SecondaryRouterAddress net.IP
+	ipv4NodePortAddrs          map[string]net.IP // iface name => ip addr
+	ipv4MasqAddrs              map[string]net.IP // iface name => ip addr
+	ipv6Address                net.IP
+	ipv6RouterAddress          net.IP
+	ipv6NodePortAddrs          map[string]net.IP // iface name => ip addr
+	ipv4AllocRange             *cidr.CIDR
+	ipv6AllocRange             *cidr.CIDR
+	routerInfo                 RouterInfo
 
 	// k8s Node External IP
 	ipv4ExternalAddress net.IP
@@ -113,8 +114,8 @@ func InitDefaultPrefix(device string) {
 					addrs.ipv6AllocRange.IP[10],
 					addrs.ipv6AllocRange.IP[11])
 			}
-			v4range := fmt.Sprintf(defaults.DefaultIPv4Prefix+"/%d",
-				ip.To4()[3], defaults.DefaultIPv4PrefixLen)
+			v4range := fmt.Sprintf(defaults.IPv4Prefix+"/%d",
+				ip.To4()[3], defaults.IPv4PrefixLen)
 			_, ip4net, err := net.ParseCIDR(v4range)
 			if err != nil {
 				log.WithError(err).WithField(logfields.V4Prefix, v4range).Panic("BUG: Invalid default IPv4 prefix")
@@ -318,6 +319,14 @@ func GetCiliumEndpointNodeIP() string {
 func SetInternalIPv4Router(ip net.IP) {
 	addrsMu.Lock()
 	addrs.ipv4RouterAddress = clone(ip)
+	if option.Config.MultiHomingEnabled() && len(ip) >= net.IPv4len {
+		// XXX: heuristic to derive secondary address as A.B+1.C.D. This should later come
+		// from IPAM.
+		p := make(net.IP, len(ip))
+		copy(p, ip)
+		p.To4()[1] += 1
+		addrs.ipv4SecondaryRouterAddress = p
+	}
 	addrsMu.Unlock()
 }
 
@@ -328,6 +337,11 @@ func GetInternalIPv4Router() net.IP {
 	addrsMu.RLock()
 	defer addrsMu.RUnlock()
 	return clone(addrs.ipv4RouterAddress)
+}
+
+// GetSecondaryInternalIPv4Router ...
+func GetSecondaryInternalIPv4Router() net.IP {
+	return addrs.ipv4SecondaryRouterAddress
 }
 
 // SetK8sExternalIPv4 sets the external IPv4 node address. It must be a public IP that is routable

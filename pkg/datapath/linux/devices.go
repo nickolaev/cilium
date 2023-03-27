@@ -85,6 +85,10 @@ func (dm *DeviceManager) Detect() ([]string, error) {
 		return nil, err
 	}
 
+	if err := dm.expandMultiHomingDevices(); err != nil {
+		return nil, err
+	}
+
 	l3DevOK := true
 	if !option.Config.EnableHostLegacyRouting {
 		// Probe whether BPF host routing is supported for L3 devices. This will
@@ -167,6 +171,20 @@ func (dm *DeviceManager) Detect() ([]string, error) {
 	deviceList := dm.getDeviceList()
 	option.Config.SetDevices(deviceList)
 	log.WithField(logfields.Devices, deviceList).Info("Detected devices")
+
+	if len(option.Config.MultiHomingDevices) > 0 {
+		var multiHomingDevices []string
+		for _, mhd := range option.Config.MultiHomingDevices {
+			if _, ok := dm.devices[mhd]; ok {
+				multiHomingDevices = append(multiHomingDevices, mhd)
+				log.WithField(option.MultiHomingDevices, mhd).Info("Allowing device for multi-homing")
+			} else {
+				log.WithField(option.MultiHomingDevices, mhd).Warning("Ignoring inexistent device for multi-homing")
+			}
+		}
+		option.Config.MultiHomingDevices = multiHomingDevices
+	}
+
 	return deviceList, nil
 }
 
@@ -406,7 +424,8 @@ func (dm *DeviceManager) Listen(ctx context.Context) (chan []string, error) {
 func (dm *DeviceManager) AreDevicesRequired() bool {
 	return option.Config.EnableNodePort ||
 		option.Config.EnableHostFirewall ||
-		option.Config.EnableBandwidthManager
+		option.Config.EnableBandwidthManager ||
+		len(option.Config.MultiHomingDevices) > 0
 }
 
 // expandDevices expands all wildcard device names to concrete devices.
@@ -430,6 +449,17 @@ func (dm *DeviceManager) expandDirectRoutingDevice() error {
 		return err
 	}
 	option.Config.DirectRoutingDevice = expandedDevices[0]
+	return nil
+}
+
+// expandMultiHomingDevices expands all wildcard multi-homing device names to concrete devices.
+// e.g. device "eth+" expands to "eth0,eth1" etc. Non-matching wildcards are ignored.
+func (dm *DeviceManager) expandMultiHomingDevices() error {
+	expandedMultiHomingDevices, err := dm.expandDeviceWildcards(option.Config.MultiHomingDevices, option.MultiHomingDevices)
+	if err != nil {
+		return err
+	}
+	option.Config.MultiHomingDevices = expandedMultiHomingDevices
 	return nil
 }
 
