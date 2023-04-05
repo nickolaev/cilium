@@ -866,6 +866,9 @@ func init() {
             "$ref": "#/parameters/ipam-owner"
           },
           {
+            "$ref": "#/parameters/ipam-pool"
+          },
+          {
             "$ref": "#/parameters/ipam-expiration"
           }
         ],
@@ -898,6 +901,9 @@ func init() {
           },
           {
             "$ref": "#/parameters/ipam-owner"
+          },
+          {
+            "$ref": "#/parameters/ipam-pool"
           }
         ],
         "responses": {
@@ -933,6 +939,9 @@ func init() {
         "parameters": [
           {
             "$ref": "#/parameters/ipam-release-arg"
+          },
+          {
+            "$ref": "#/parameters/ipam-pool"
           }
         ],
         "responses": {
@@ -2218,6 +2227,9 @@ func init() {
               "type": "boolean"
             }
           }
+        },
+        "multi-homing-configuration": {
+          "$ref": "#/definitions/MultiHomingConfiguration"
         },
         "nodeMonitor": {
           "description": "Status of the node monitor",
@@ -3613,6 +3625,19 @@ func init() {
         }
       }
     },
+    "MultiHomingConfiguration": {
+      "description": "Multi-homing configuration",
+      "type": "object",
+      "properties": {
+        "devices": {
+          "description": "List of devices used in multi-homing mode",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "NameManager": {
       "description": "Internal state about DNS names in relation to policy subsystem",
       "type": "object",
@@ -4546,6 +4571,11 @@ func init() {
     "ipam-owner": {
       "type": "string",
       "name": "owner",
+      "in": "query"
+    },
+    "ipam-pool": {
+      "type": "string",
+      "name": "pool",
       "in": "query"
     },
     "ipam-release-arg": {
@@ -5606,6 +5636,11 @@ func init() {
             "in": "query"
           },
           {
+            "type": "string",
+            "name": "pool",
+            "in": "query"
+          },
+          {
             "type": "boolean",
             "name": "expiration",
             "in": "header"
@@ -5646,6 +5681,11 @@ func init() {
             "type": "string",
             "name": "owner",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "name": "pool",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5685,6 +5725,11 @@ func init() {
             "name": "ip",
             "in": "path",
             "required": true
+          },
+          {
+            "type": "string",
+            "name": "pool",
+            "in": "query"
           }
         ],
         "responses": {
@@ -7092,6 +7137,9 @@ func init() {
               "type": "boolean"
             }
           }
+        },
+        "multi-homing-configuration": {
+          "$ref": "#/definitions/MultiHomingConfiguration"
         },
         "nodeMonitor": {
           "description": "Status of the node monitor",
@@ -8886,6 +8934,19 @@ func init() {
         }
       }
     },
+    "MultiHomingConfiguration": {
+      "description": "Multi-homing configuration",
+      "type": "object",
+      "properties": {
+        "devices": {
+          "description": "List of devices used in multi-homing mode",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "NameManager": {
       "description": "Internal state about DNS names in relation to policy subsystem",
       "type": "object",
@@ -9883,6 +9944,11 @@ func init() {
     "ipam-owner": {
       "type": "string",
       "name": "owner",
+      "in": "query"
+    },
+    "ipam-pool": {
+      "type": "string",
+      "name": "pool",
       "in": "query"
     },
     "ipam-release-arg": {

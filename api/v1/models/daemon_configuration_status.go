@@ -65,6 +65,9 @@ type DaemonConfigurationStatus struct {
 	// masquerade protocols
 	MasqueradeProtocols *DaemonConfigurationStatusMasqueradeProtocols `json:"masqueradeProtocols,omitempty"`
 
+	// multi homing configuration
+	MultiHomingConfiguration *MultiHomingConfiguration `json:"multi-homing-configuration,omitempty"`
+
 	// Status of the node monitor
 	NodeMonitor *MonitorStatus `json:"nodeMonitor,omitempty"`
 
@@ -96,6 +99,10 @@ func (m *DaemonConfigurationStatus) Validate(formats strfmt.Registry) error {
 	}
 
 	if err := m.validateMasqueradeProtocols(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateMultiHomingConfiguration(formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -198,6 +205,24 @@ func (m *DaemonConfigurationStatus) validateMasqueradeProtocols(formats strfmt.R
 				return ve.ValidateName("masqueradeProtocols")
 			} else if ce, ok := err.(*errors.CompositeError); ok {
 				return ce.ValidateName("masqueradeProtocols")
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *DaemonConfigurationStatus) validateMultiHomingConfiguration(formats strfmt.Registry) error {
+
+	if swag.IsZero(m.MultiHomingConfiguration) { // not required
+		return nil
+	}
+
+	if m.MultiHomingConfiguration != nil {
+		if err := m.MultiHomingConfiguration.Validate(formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("multi-homing-configuration")
 			}
 			return err
 		}

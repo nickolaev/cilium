@@ -96,8 +96,8 @@ func InitDefaultPrefix(device string) {
 					ipv6range.IP[10],
 					ipv6range.IP[11])
 			}
-			v4range := fmt.Sprintf(defaults.DefaultIPv4Prefix+"/%d",
-				ip.To4()[3], defaults.DefaultIPv4PrefixLen)
+			v4range := fmt.Sprintf(defaults.IPv4Prefix+"/%d",
+				ip.To4()[3], defaults.IPv4PrefixLen)
 			_, ip4net, err := net.ParseCIDR(v4range)
 			if err != nil {
 				log.WithError(err).WithField(logfields.V4Prefix, v4range).Panic("BUG: Invalid default IPv4 prefix")
@@ -300,13 +300,28 @@ func GetCiliumEndpointNodeIP() string {
 func SetInternalIPv4Router(ip net.IP) {
 	localNode.Update(func(n *types.Node) {
 		n.SetCiliumInternalIP(ip)
+		if option.Config.MultiHomingEnabled() && len(ip) >= net.IPv4len {
+			// XXX: heuristic to derive secondary address as A.B+1.C.D. This should later come
+			// from IPAM.
+			p := make(net.IP, len(ip))
+			copy(p, ip)
+			p.To4()[1] += 1
+			n.SetCiliumSecondaryInternalIP(p)
+		}
 	})
+
 }
 
 // GetInternalIPv4Router returns the cilium internal IPv4 node address. This must not be conflated with
 // k8s internal IP as this IP address is only relevant within the Cilium-managed network (this means
 // within the node for direct routing mode and on the overlay for tunnel mode).
 func GetInternalIPv4Router() net.IP {
+	n := localNode.Get()
+	return n.GetCiliumInternalIP(false)
+}
+
+// GetSecondaryInternalIPv4Router ...
+func GetSecondaryInternalIPv4Router() net.IP {
 	n := localNode.Get()
 	return n.GetCiliumInternalIP(false)
 }

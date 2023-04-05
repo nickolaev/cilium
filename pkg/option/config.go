@@ -126,6 +126,9 @@ const (
 	// direct routing mode (only required by BPF NodePort)
 	DirectRoutingDevice = "direct-routing-device"
 
+	// MultiHomingDevices ...
+	MultiHomingDevices = "multi-homing-devices"
+
 	// LBDevInheritIPAddr is device name which IP addr is inherited by devices
 	// running BPF loadbalancer program
 	LBDevInheritIPAddr = "bpf-lb-dev-ip-addr-inherit"
@@ -1319,6 +1322,7 @@ type DaemonConfig struct {
 	devicesMu           lock.RWMutex // Protects devices
 	devices             []string     // bpf_host device
 	DirectRoutingDevice string       // Direct routing device (used by BPF NodePort and BPF Host Routing)
+	MultiHomingDevices  []string     // Multi-homing devices
 	LBDevInheritIPAddr  string       // Device which IP addr used by bpf_host devices
 	EnableXDPPrefilter  bool         // Enable XDP-based prefiltering
 	XDPMode             string       // XDP mode, values: { xdpdrv | xdpgeneric | none }
@@ -2467,7 +2471,8 @@ func (c *DaemonConfig) TunnelExists() bool {
 // AreDevicesRequired returns true if the agent needs to attach to the native
 // devices to implement some features.
 func (c *DaemonConfig) AreDevicesRequired() bool {
-	return c.EnableNodePort || c.EnableHostFirewall || c.EnableBandwidthManager
+	return c.EnableNodePort || c.EnableHostFirewall ||
+		c.EnableBandwidthManager || len(c.MultiHomingDevices) > 0
 }
 
 // MasqueradingEnabled returns true if either IPv4 or IPv6 masquerading is enabled.
@@ -2561,6 +2566,11 @@ func (c *DaemonConfig) UnreachableRoutesEnabled() bool {
 func (c *DaemonConfig) EndpointStatusIsEnabled(option string) bool {
 	_, ok := c.EndpointStatus[option]
 	return ok
+}
+
+// MultiHomingEnabled returns true if multi-homing is enabled.
+func (c *DaemonConfig) MultiHomingEnabled() bool {
+	return len(c.MultiHomingDevices) > 0
 }
 
 // LocalClusterName returns the name of the cluster Cilium is deployed in
@@ -2852,6 +2862,7 @@ func (c *DaemonConfig) Populate(vp *viper.Viper) {
 	c.Debug = vp.GetBool(DebugArg)
 	c.DebugVerbose = vp.GetStringSlice(DebugVerbose)
 	c.DirectRoutingDevice = vp.GetString(DirectRoutingDevice)
+	c.MultiHomingDevices = vp.GetStringSlice(MultiHomingDevices)
 	c.LBDevInheritIPAddr = vp.GetString(LBDevInheritIPAddr)
 	c.EnableIPv4 = vp.GetBool(EnableIPv4Name)
 	c.EnableIPv6 = vp.GetBool(EnableIPv6Name)

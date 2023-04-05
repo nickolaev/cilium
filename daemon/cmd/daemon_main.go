@@ -221,6 +221,9 @@ func initializeFlags() {
 	flags.String(option.DirectRoutingDevice, "", "Device name used to connect nodes in direct routing mode (used by BPF NodePort, BPF host routing; if empty, automatically set to a device with k8s InternalIP/ExternalIP or with a default route)")
 	option.BindEnv(Vp, option.DirectRoutingDevice)
 
+	flags.StringSlice(option.MultiHomingDevices, []string{}, "List of devices used in multi-homing mode")
+	option.BindEnv(Vp, option.MultiHomingDevices)
+
 	flags.Bool(option.EnableRuntimeDeviceDetection, false, "Enable runtime device detection and datapath reconfiguration (experimental)")
 	option.BindEnv(Vp, option.EnableRuntimeDeviceDetection)
 

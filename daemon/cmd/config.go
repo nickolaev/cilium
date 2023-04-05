@@ -201,6 +201,9 @@ func (h *getConfig) Handle(params GetConfigParams) middleware.Responder {
 		EgressMultiHomeIPRuleCompat: option.Config.EgressMultiHomeIPRuleCompat,
 		GROMaxSize:                  int64(d.bigTCPConfig.GetGROMaxSize()),
 		GSOMaxSize:                  int64(d.bigTCPConfig.GetGSOMaxSize()),
+		MultiHomingConfiguration: &models.MultiHomingConfiguration{
+			Devices: option.Config.MultiHomingDevices,
+		},
 	}
 
 	cfg := &models.DaemonConfiguration{

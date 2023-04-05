@@ -28,6 +28,7 @@ NR_CPUS=${21}
 ENDPOINT_ROUTES=${22}
 PROXY_RULE=${23}
 FILTER_PRIO=${24}
+IP4_HOST_SECONDARY=${25}
 
 ID_HOST=1
 ID_WORLD=2
@@ -404,16 +405,20 @@ esac
 		[ -n "$(ip -6 addr show to $IP6_HOST dev $HOST_DEV1)" ] || ip -6 addr add $IP6_HOST dev $HOST_DEV1
 	fi
 	if [ "$IP4_HOST" != "<nil>" ]; then
-		[ -n "$(ip -4 addr show to $IP4_HOST dev $HOST_DEV1)" ] || ip -4 addr add $IP4_HOST dev $HOST_DEV1
+		[ -n "$(ip -4 addr show to $IP4_HOST dev $HOST_DEV1)" ] || ip -4 addr add $IP4_HOST dev $HOST_DEV1 scope link
+	fi
+
+	if [ "$IP4_HOST_SECONDARY" != "<nil>" ]; then
+		[ -n "$(ip -4 addr show to $IP4_HOST_SECONDARY dev $HOST_DEV1)" ] || ip -4 addr add $IP4_HOST_SECONDARY dev $HOST_DEV1 scope link
 	fi
 
 if [ "$PROXY_RULE" = "true" ]; then
-# Decrease priority of the rule to identify local addresses
-move_local_rules
+	# Decrease priority of the rule to identify local addresses
+	move_local_rules
 
-# Install new rules before local rule to ensure that packets from the proxy are
-# using a separate routing table
-setup_proxy_rules
+	# Install new rules before local rule to ensure that packets from the proxy are
+	# using a separate routing table
+	setup_proxy_rules
 fi
 
 if [ "$MODE" = "ipip" ]; then

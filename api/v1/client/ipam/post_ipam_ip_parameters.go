@@ -72,6 +72,8 @@ type PostIpamIPParams struct {
 
 	// Owner.
 	Owner *string
+	/*Pool*/
+	Pool *string
 
 	timeout    time.Duration
 	Context    context.Context
@@ -148,6 +150,17 @@ func (o *PostIpamIPParams) SetOwner(owner *string) {
 	o.Owner = owner
 }
 
+// WithPool adds the pool to the post ipam IP params
+func (o *PostIpamIPParams) WithPool(pool *string) *PostIpamIPParams {
+	o.SetPool(pool)
+	return o
+}
+
+// SetPool adds the pool to the post ipam IP params
+func (o *PostIpamIPParams) SetPool(pool *string) {
+	o.Pool = pool
+}
+
 // WriteToRequest writes these params to a swagger request
 func (o *PostIpamIPParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
 
@@ -176,6 +189,22 @@ func (o *PostIpamIPParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Re
 				return err
 			}
 		}
+	}
+
+	if o.Pool != nil {
+
+		// query param pool
+		var qrPool string
+		if o.Pool != nil {
+			qrPool = *o.Pool
+		}
+		qPool := qrPool
+		if qPool != "" {
+			if err := r.SetQueryParam("pool", qPool); err != nil {
+				return err
+			}
+		}
+
 	}
 
 	if len(res) > 0 {

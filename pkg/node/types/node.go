@@ -337,10 +337,31 @@ func (n *Node) GetCiliumInternalIP(ipv6 bool) net.IP {
 	return nil
 }
 
+// GetCiliumSecondaryInternalIP returns the CiliumSecondaryInternalIP e.g. the IP associated
+// with secondary cilium_host on the node.
+func (n *Node) GetCiliumSecondaryInternalIP(ipv6 bool) net.IP {
+	for _, addr := range n.IPAddresses {
+		if (ipv6 && addr.IP.To4() != nil) ||
+			(!ipv6 && addr.IP.To4() == nil) {
+			continue
+		}
+		if addr.Type == addressing.NodeCiliumSecondaryInternalIP {
+			return addr.IP
+		}
+	}
+	return nil
+}
+
 // SetCiliumInternalIP sets the CiliumInternalIP e.g. the IP associated
 // with cilium_host on the node.
 func (n *Node) SetCiliumInternalIP(newAddr net.IP) {
 	n.setAddress(addressing.NodeCiliumInternalIP, newAddr)
+}
+
+// SetCiliumSecondaryInternalIP sets the CiliumSecondaryInternalIP e.g. the IP associated
+// with the secondary cilium_host on the node.
+func (n *Node) SetCiliumSecondaryInternalIP(newAddr net.IP) {
+	n.setAddress(addressing.NodeCiliumSecondaryInternalIP, newAddr)
 }
 
 // SetNodeExternalIP sets the NodeExternalIP.

@@ -25,6 +25,7 @@ import (
 	endpointid "github.com/cilium/cilium/pkg/endpoint/id"
 	"github.com/cilium/cilium/pkg/endpoint/regeneration"
 	"github.com/cilium/cilium/pkg/fqdn/restore"
+	"github.com/cilium/cilium/pkg/ipam"
 	"github.com/cilium/cilium/pkg/k8s"
 	k8sConst "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
 	"github.com/cilium/cilium/pkg/k8s/client"
@@ -342,7 +343,9 @@ func (d *Daemon) createEndpoint(ctx context.Context, owner regeneration.Owner, e
 
 	oldEp = d.endpointManager.LookupContainerID(ep.GetContainerID())
 	if oldEp != nil {
-		return invalidDataError(ep, fmt.Errorf("endpoint for container %s already exists", ep.GetContainerID()))
+		if oldEp.HostInterface() == ep.HostInterface() {
+			return invalidDataError(ep, fmt.Errorf("endpoint for container %s already exists", ep.GetContainerID()))
+		}
 	}
 
 	var checkIDs []string
@@ -726,13 +729,13 @@ func (d *Daemon) EndpointDeleted(ep *endpoint.Endpoint, conf endpoint.DeleteConf
 
 	if !conf.NoIPRelease {
 		if option.Config.EnableIPv4 {
-			if err := d.ipam.ReleaseIP(ep.IPv4.AsSlice()); err != nil {
+			if err := d.ipam.ReleaseIP(ep.IPv4.AsSlice(), ipam.PoolDefault); err != nil {
 				scopedLog := ep.Logger(daemonSubsys).WithError(err)
 				scopedLog.Warning("Unable to release IPv4 address during endpoint deletion")
 			}
 		}
 		if option.Config.EnableIPv6 {
-			if err := d.ipam.ReleaseIP(ep.IPv6.AsSlice()); err != nil {
+			if err := d.ipam.ReleaseIP(ep.IPv6.AsSlice(), ipam.PoolDefault); err != nil {
 				scopedLog := ep.Logger(daemonSubsys).WithError(err)
 				scopedLog.Warning("Unable to release IPv6 address during endpoint deletion")
 			}
