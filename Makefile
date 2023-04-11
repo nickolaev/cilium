@@ -514,10 +514,15 @@ kind-install-cilium: kind-ready ## Install a local Cilium version into the clust
 	# in the background instead and wait for the resources to be available.
 	# https://github.com/cilium/cilium-cli/issues/1070
 	cilium install \
-		--chart-directory=$(ROOT_DIR)/install/kubernetes/cilium \
-		--helm-values=$(ROOT_DIR)/contrib/testing/kind-values.yaml \
-		--version= \
-		>/dev/null 2>&1 &
+	        --chart-directory=$(ROOT_DIR)/install/kubernetes/cilium \
+	        --helm-values=$(ROOT_DIR)/contrib/testing/kind-values.yaml \
+	        --version= \
+	        --helm-set \
+debug.enabled=true,\
+bpf.monitorAggregation=none,\
+kubeProxyReplacement=strict,\
+multiHomingDevices='{}' \
+	        >/dev/null 2>&1 &
 
 .PHONY: kind-check-cilium
 kind-check-cilium:
