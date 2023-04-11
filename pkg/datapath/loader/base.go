@@ -296,9 +296,13 @@ func (l *Loader) Reinitialize(ctx context.Context, o datapath.BaseProgramOwner, 
 		// TODO: set this from Go code and abstract away in a multihoming module
 		if option.Config.MultiHomingEnabled() {
 			args[initArgSecondaryIPv4NodeIP] = node.GetSecondaryInternalIPv4Router().String()
+		} else {
+			args[initArgSecondaryIPv4NodeIP] = "<nil>"
 		}
+
 	} else {
 		args[initArgIPv4NodeIP] = "<nil>"
+		args[initArgSecondaryIPv4NodeIP] = "<nil>"
 	}
 
 	if option.Config.EnableIPv6 {
