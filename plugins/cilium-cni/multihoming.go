@@ -69,7 +69,7 @@ func getMultiHomingPodRoute(ip net.IP, mtu int) *route.Route {
 	// XXX: Hard-code mask for now, this info should come from IPAM
 	var mask net.IPMask
 	if ip.To4() != nil {
-		mask = net.IPv4Mask(255, 255, 255, 0)
+		mask = net.CIDRMask(16, 32)
 	} else {
 		mask = net.CIDRMask(96, 128)
 	}
@@ -83,30 +83,39 @@ func getMultiHomingPodRoute(ip net.IP, mtu int) *route.Route {
 	}
 }
 
-func installMultiHomingHostRoute(podIP net.IP) error {
+func installMultiHomingHostRoute(podIP net.IP, logger *logrus.Entry) error {
 	link, err := netlink.LinkByName(defaults.HostDevice)
 	if err != nil {
-		return fmt.Errorf("failed to get link %s: %w", defaults.HostDevice, err)
+		return fmt.Errorf("failed to get link %s: %w", defaults.SecondHostDevice, err)
 	}
 
 	// host netns route:
 	// <pod IP>/24 dev cilium_host
 	var mask net.IPMask
 	if podIP.To4() != nil {
-		mask = net.CIDRMask(24, 32)
+		mask = net.CIDRMask(16, 32)
 	} else {
-		mask = net.CIDRMask(128, 128)
+		mask = net.CIDRMask(96, 128)
 	}
 	r := &netlink.Route{
 		Dst: &net.IPNet{
-			IP:   podIP,
+			IP:   podIP.Mask(mask),
 			Mask: mask,
 		},
 		LinkIndex: link.Attrs().Index,
 	}
+
+	logger.WithFields(logrus.Fields{
+		"route": r,
+	}).Debug("r for IPv4 address")
+
+	// adding the host route as a best-effort operation
 	err = netlink.RouteAdd(r)
 	if err != nil {
-		return fmt.Errorf("failed to install multi-homing host route: %w", err)
+		logger.WithFields(logrus.Fields{
+			"err": err,
+		}).Debug("failed to install multi-homing host route")
+		// return fmt.Errorf("failed to install multi-homing host route: %w", err)
 	}
 	return nil
 }
@@ -252,7 +261,7 @@ func attachInterfaceInPod(
 		res.Routes = append(res.Routes, routes...)
 		res.Routes = append(res.Routes, newCNIRoute(podRoute))
 
-		if err := installMultiHomingHostRoute(podIPv6); err != nil {
+		if err := installMultiHomingHostRoute(podIPv6, logger); err != nil {
 			return nil, fmt.Errorf("unable to install multi-homing host IPv6 routes: %w", err)
 		}
 	}
@@ -266,6 +275,12 @@ func attachInterfaceInPod(
 			return nil, fmt.Errorf("unable to prepare IPv4 addressing for %q: %s", ep.Addressing.IPV4, err)
 		}
 
+		logger.WithFields(logrus.Fields{
+			"mtu":      mtu,
+			"ipConfig": ipConfig,
+			"routes":   routes,
+		}).Debug("ipConfig & routes for IPv4 address")
+
 		// TODO: address & netmask (?) should come from IPAM. Might also want a separate MTU.
 		podRoute := getMultiHomingPodRoute(podIPv4, mtu)
 		state.IP4routes = append(state.IP4routes, *podRoute)
@@ -273,7 +288,11 @@ func attachInterfaceInPod(
 		res.Routes = append(res.Routes, routes...)
 		res.Routes = append(res.Routes, newCNIRoute(podRoute))
 
-		if err := installMultiHomingHostRoute(podIPv4); err != nil {
+		logger.WithFields(logrus.Fields{
+			"podRoute": podRoute,
+		}).Debug("podRoute for IPv4 address")
+
+		if err := installMultiHomingHostRoute(podIPv4, logger); err != nil {
 			return nil, fmt.Errorf("unable to install multi-homing host IPv4 routes: %w", err)
 		}
 	}
