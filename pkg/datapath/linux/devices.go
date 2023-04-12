@@ -233,24 +233,33 @@ func (dm *DeviceManager) isViableDevice(l3DevOK, hasDefaultRoute bool, link netl
 		return false
 	}
 
-	switch link.Type() {
-	case "veth":
-		// Skip veth devices that don't have a default route.
-		// This is a workaround for kubernetes-in-docker. We want to avoid
-		// veth devices in general as they may be leftovers from another CNI.
-		if !hasDefaultRoute {
-			log.WithField(logfields.Device, name).
-				Debug("Ignoring veth device as it has no default route")
+	isMultihoming := false
+	for _, mhd := range option.Config.MultiHomingDevices {
+		if mhd == name {
+			isMultihoming = true
+			break
+		}
+	}
+
+	if !isMultihoming {
+		switch link.Type() {
+		case "veth":
+			// Skip veth devices that don't have a default route.
+			// This is a workaround for kubernetes-in-docker. We want to avoid
+			// veth devices in general as they may be leftovers from another CNI.
+			if !hasDefaultRoute {
+				log.WithField(logfields.Device, name).
+					Debug("Ignoring veth device as it has no default route")
+				return false
+			}
+
+		case "bridge", "openvswitch":
+			// Skip bridge devices as they're very unlikely to be used for K8s
+			// purposes. In the rare cases where a user wants to load datapath
+			// programs onto them they can override device detection with --devices.
+			log.WithField(logfields.Device, name).Debug("Ignoring bridge-like device")
 			return false
 		}
-
-	case "bridge", "openvswitch":
-		// Skip bridge devices as they're very unlikely to be used for K8s
-		// purposes. In the rare cases where a user wants to load datapath
-		// programs onto them they can override device detection with --devices.
-		log.WithField(logfields.Device, name).Debug("Ignoring bridge-like device")
-		return false
-
 	}
 
 	if link.Attrs().MasterIndex > 0 {
