@@ -7,7 +7,12 @@ operator:
     override: "localhost:5000/cilium/operator-generic:local"
     suffix: ""
 ipam:
-  mode: kubernetes
+  # -- Configure IP Address Management mode.
+  # ref: https://docs.cilium.io/en/stable/network/concepts/ipam/
+  mode: "cluster-pool"
+  operator:
+    # -- IPv4 CIDR list range to delegate to individual nodes for IPAM.
+    clusterPoolIPv4PodCIDRList: ["10.1.0.0/16", "10.2.0.0/16"]
 monitor-aggregation: none
 livenessProbe:
   failureThreshold: 9999

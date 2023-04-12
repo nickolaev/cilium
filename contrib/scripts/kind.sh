@@ -132,6 +132,10 @@ kubectl taint nodes --all node-role.kubernetes.io/master-
 kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 set -e
 
+docker network create --subnet=10.2.0.0/16 second || true
+docker network connect second kind-control-plane || true
+docker network connect second kind-worker || true
+
 echo
 echo "Images are pushed into the kind registry like so:"
 echo "  export DOCKER_REGISTRY=localhost:5000"

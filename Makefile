@@ -521,7 +521,7 @@ kind-install-cilium: kind-ready ## Install a local Cilium version into the clust
 debug.enabled=true,\
 bpf.monitorAggregation=none,\
 kubeProxyReplacement=strict,\
-multiHomingDevices='{}' \
+multiHomingDevices='{eth1}' \
 	        >/dev/null 2>&1 &
 
 .PHONY: kind-check-cilium

@@ -12,3 +12,5 @@ fi
 kind delete clusters kind && \
 docker kill kind-registry && \
 docker rm kind-registry
+
+docker network rm second
