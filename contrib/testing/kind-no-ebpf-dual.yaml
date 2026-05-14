@@ -1,0 +1,41 @@
+# Experimental no-eBPF dual-stack values for the Phase 0 linux-route spike.
+#
+# Create the kind cluster with kube-proxy disabled, for example:
+#   KUBEPROXY_MODE=none IPFAMILY=dual ./contrib/scripts/kind.sh
+#
+# Until the nftables Service replacement exists, ClusterIP/NodePort traffic is
+# expected to fail in this profile. Phase 0 uses that failure as the baseline for
+# the nftables Service spike.
+bpf:
+  datapathMode: linux-route
+  masquerade: false
+
+routingMode: native
+autoDirectNodeRoutes: true
+endpointRoutes:
+  enabled: true
+
+ipv4:
+  enabled: true
+ipv6:
+  enabled: true
+k8s:
+  requireIPv4PodCIDR: true
+  requireIPv6PodCIDR: true
+
+# Keep the existing eBPF KPR/socket-LB disabled. The M1 plan calls for a
+# separate no-eBPF Linux-rule Service replacement flag instead of overloading
+# kubeProxyReplacement=true.
+kubeProxyReplacement: false
+socketLB:
+  enabled: false
+
+# Masquerade/SNAT-sensitive cases are outside the M1 spike.
+enableIPv4Masquerade: false
+enableIPv6Masquerade: false
+
+# Explicit M1 cuts.
+l7Proxy: false
+policyEnforcementMode: never
+hostFirewall:
+  enabled: false

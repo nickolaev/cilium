@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/netip"
 	"path/filepath"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/cilium/hive/job"
 	"github.com/cilium/statedb"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/datapath/config"
@@ -89,7 +91,7 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep endpoint.Endpoint, lnc *
 			})
 			return "route-only", nil
 		}
-		if err := reloadRouteOnlyEndpoint(l.logger, l.db, l.devices, l.routeManager, ep); err != nil {
+		if err := reloadRouteOnlyEndpoint(l.logger, l.db, l.devices, l.routeManager, ep, lnc.CiliumInternalIPv6); err != nil {
 			return "", err
 		}
 		return "route-only", nil
@@ -130,7 +132,7 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep endpoint.Endpoint, lnc *
 
 func reloadRouteOnlyEndpoint(logger *slog.Logger, db *statedb.DB,
 	devices statedb.Table[*tables.Device], rm *routeReconciler.DesiredRouteManager,
-	ep endpoint.Endpoint) error {
+	ep endpoint.Endpoint, routerIPv6 netip.Addr) error {
 
 	device := ep.InterfaceName()
 	iface, err := safenetlink.LinkByName(device)
@@ -170,6 +172,10 @@ func reloadRouteOnlyEndpoint(logger *slog.Logger, db *statedb.DB,
 		)
 	}
 
+	if err := ensureRouteOnlyIPv6Gateway(iface, routerIPv6); err != nil {
+		return fmt.Errorf("ensuring route-only IPv6 gateway on %s: %w", device, err)
+	}
+
 	if ep.RequireEndpointRoute() {
 		if ip := ep.IPv4Address(); ip.IsValid() {
 			if err := upsertEndpointRoute(db, devices, rm, ep, netip.PrefixFrom(ip, ip.BitLen())); err != nil {
@@ -183,6 +189,23 @@ func reloadRouteOnlyEndpoint(logger *slog.Logger, db *statedb.DB,
 		}
 	}
 
+	return nil
+}
+
+func ensureRouteOnlyIPv6Gateway(iface netlink.Link, routerIPv6 netip.Addr) error {
+	if !routerIPv6.IsValid() || !routerIPv6.Is6() {
+		return nil
+	}
+	addr := &netlink.Addr{
+		IPNet: &net.IPNet{
+			IP:   net.IP(routerIPv6.AsSlice()),
+			Mask: net.CIDRMask(128, 128),
+		},
+		Flags: unix.IFA_F_NODAD,
+	}
+	if err := netlink.AddrAdd(iface, addr); err != nil && !errors.Is(err, unix.EEXIST) {
+		return err
+	}
 	return nil
 }
 
