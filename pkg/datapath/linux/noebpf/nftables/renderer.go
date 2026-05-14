@@ -43,7 +43,7 @@ type ServiceDNAT struct {
 // PolicyAllow is a minimal allow tuple for the Phase 0 default-deny smoke.
 type PolicyAllow struct {
 	Source      netip.Prefix
-	Destination netip.Addr
+	Destination netip.Prefix
 	Port        uint16
 	Protocol    Protocol
 }
@@ -141,10 +141,10 @@ func (p EndpointPolicy) validate() error {
 	}
 	for _, allow := range append(append([]PolicyAllow{}, p.IngressAllow...), p.EgressAllow...) {
 		if !allow.Source.IsValid() || !allow.Destination.IsValid() {
-			return fmt.Errorf("policy allow requires valid source prefix and destination IP")
+			return fmt.Errorf("policy allow requires valid source and destination prefixes")
 		}
-		if allow.Source.Addr().Is4() != allow.Destination.Is4() {
-			return fmt.Errorf("policy allow source and destination IP families must match")
+		if allow.Source.Addr().Is4() != allow.Destination.Addr().Is4() {
+			return fmt.Errorf("policy allow source and destination families must match")
 		}
 		if err := validateProtocol(allow.Protocol); err != nil {
 			return err

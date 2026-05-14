@@ -19,8 +19,8 @@ const namespaceLabel = "io.kubernetes.pod.namespace"
 // NetworkPolicy into nftables endpoint policy. It intentionally handles the
 // certification-critical 80/20 subset first: local pods, numeric TCP/UDP ports,
 // pod selectors, all-namespace selectors, same-namespace defaults, and ipBlock.
-func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, networkPolicies []*networkingv1.NetworkPolicy) ([]EndpointPolicy, error) {
-	pods := podsFromLocalPods(localPods)
+func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, networkPolicies []*networkingv1.NetworkPolicy) ([]EndpointPolicy, error) {
+	pods := podsFromK8sPods(localPods, allPods, namespaces)
 	byPod := map[string]*EndpointPolicySpec{}
 
 	for _, np := range networkPolicies {
@@ -29,7 +29,7 @@ func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, networkPolic
 		}
 		for i := range pods {
 			pod := pods[i]
-			if pod.Namespace != np.Namespace || !labelSelectorMatches(np.Spec.PodSelector, pod.Labels) {
+			if !pod.Local || pod.Namespace != np.Namespace || !labelSelectorMatches(np.Spec.PodSelector, pod.Labels) {
 				continue
 			}
 
@@ -70,32 +70,74 @@ func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, networkPolic
 	return out, nil
 }
 
-func podsFromLocalPods(localPods []k8sTables.LocalPod) []Pod {
-	var pods []Pod
+func podsFromK8sPods(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace) []Pod {
+	namespaceLabels := map[string]map[string]string{}
+	for _, ns := range namespaces {
+		labels := map[string]string{namespaceLabel: ns.Name}
+		for k, v := range ns.Labels {
+			labels[k] = v
+		}
+		namespaceLabels[ns.Name] = labels
+	}
+
+	localKeys := map[string]struct{}{}
 	for _, lp := range localPods {
-		if lp.Pod == nil || lp.Spec.HostNetwork {
+		localKeys[lp.Namespace+"/"+lp.Name] = struct{}{}
+	}
+
+	var pods []Pod
+	seen := map[string]struct{}{}
+	for _, kp := range allPods {
+		pod, ok := podFromK8sPod(kp, namespaceLabels)
+		if !ok {
 			continue
 		}
-		pod := Pod{
-			Name:      lp.Name,
-			Namespace: lp.Namespace,
-			Labels:    map[string]string{namespaceLabel: lp.Namespace},
-			Local:     true,
+		if _, ok := localKeys[pod.Namespace+"/"+pod.Name]; ok {
+			pod.Local = true
 		}
-		for k, v := range lp.Labels {
-			pod.Labels[k] = v
+		pods = append(pods, pod)
+		seen[pod.Namespace+"/"+pod.Name] = struct{}{}
+	}
+
+	// Fall back to the local-pod table for tests or startup races before the all-pod
+	// informer has replayed. Remote peers still come from allPods once available.
+	for _, lp := range localPods {
+		if _, ok := seen[lp.Namespace+"/"+lp.Name]; ok {
+			continue
 		}
-		for _, podIP := range lp.Status.PodIPs {
-			ip, err := netip.ParseAddr(podIP.IP)
-			if err == nil {
-				pod.IPs = append(pod.IPs, ip)
-			}
+		pod, ok := podFromK8sPod(lp.Pod, namespaceLabels)
+		if !ok {
+			continue
 		}
-		if len(pod.IPs) > 0 {
-			pods = append(pods, pod)
-		}
+		pod.Local = true
+		pods = append(pods, pod)
 	}
 	return pods
+}
+
+func podFromK8sPod(kp *corev1.Pod, namespaceLabels map[string]map[string]string) (Pod, bool) {
+	if kp == nil || kp.Spec.HostNetwork || kp.DeletionTimestamp != nil {
+		return Pod{}, false
+	}
+	pod := Pod{
+		Name:            kp.Name,
+		Namespace:       kp.Namespace,
+		Labels:          map[string]string{namespaceLabel: kp.Namespace},
+		NamespaceLabels: map[string]string{namespaceLabel: kp.Namespace},
+	}
+	if labels, ok := namespaceLabels[kp.Namespace]; ok {
+		pod.NamespaceLabels = labels
+	}
+	for k, v := range kp.Labels {
+		pod.Labels[k] = v
+	}
+	for _, podIP := range kp.Status.PodIPs {
+		ip, err := netip.ParseAddr(podIP.IP)
+		if err == nil {
+			pod.IPs = append(pod.IPs, ip)
+		}
+	}
+	return pod, len(pod.IPs) > 0
 }
 
 func policyHasIngress(np *networkingv1.NetworkPolicy) bool {
@@ -170,14 +212,21 @@ func knpPeers(policyNamespace string, peers []networkingv1.NetworkPolicyPeer) ([
 			continue
 		}
 
-		p.PodSelector = selectorMatchLabels(peer.PodSelector)
+		var err error
+		p.PodSelector, err = selectorMatchLabels(peer.PodSelector)
+		if err != nil {
+			return nil, err
+		}
 		if peer.NamespaceSelector == nil {
 			if p.PodSelector == nil {
 				p.PodSelector = map[string]string{}
 			}
 			p.PodSelector[namespaceLabel] = policyNamespace
 		} else {
-			p.NamespaceSelector = selectorMatchLabels(peer.NamespaceSelector)
+			p.NamespaceSelector, err = selectorMatchLabels(peer.NamespaceSelector)
+			if err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, p)
 	}
@@ -198,30 +247,36 @@ func knpPorts(ports []networkingv1.NetworkPolicyPort) ([]Port, error) {
 			case corev1.ProtocolUDP:
 				proto = ProtocolUDP
 			default:
-				continue
+				return nil, fmt.Errorf("unsupported protocol %s", *port.Protocol)
 			}
 		}
 		if port.Port == nil {
 			out = append(out, Port{Protocol: proto})
 			continue
 		}
+		if port.EndPort != nil {
+			return nil, fmt.Errorf("endPort is not supported")
+		}
 		if port.Port.Type != 0 { // named ports are not in the M1 subset.
-			continue
+			return nil, fmt.Errorf("named ports are not supported")
 		}
 		out = append(out, Port{Protocol: proto, Port: uint16(port.Port.IntVal)})
 	}
 	return out, nil
 }
 
-func selectorMatchLabels(sel *metav1.LabelSelector) map[string]string {
+func selectorMatchLabels(sel *metav1.LabelSelector) (map[string]string, error) {
 	if sel == nil {
-		return nil
+		return nil, nil
+	}
+	if len(sel.MatchExpressions) > 0 {
+		return nil, fmt.Errorf("matchExpressions are not supported")
 	}
 	out := make(map[string]string, len(sel.MatchLabels))
 	for k, v := range sel.MatchLabels {
 		out[k] = string(v)
 	}
-	return out
+	return out, nil
 }
 
 func labelSelectorMatches(sel metav1.LabelSelector, labels map[string]string) bool {

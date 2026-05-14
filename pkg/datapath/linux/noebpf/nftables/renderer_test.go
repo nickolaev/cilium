@@ -33,7 +33,7 @@ func TestRenderDualStackServiceAndPolicySpike(t *testing.T) {
 				IngressDeny: true,
 				IngressAllow: []PolicyAllow{{
 					Source:      netip.MustParsePrefix("10.244.0.0/16"),
-					Destination: netip.MustParseAddr("10.244.1.20"),
+					Destination: netip.MustParsePrefix("10.244.1.20/32"),
 					Port:        80,
 					Protocol:    ProtocolTCP,
 				}},
@@ -43,7 +43,7 @@ func TestRenderDualStackServiceAndPolicySpike(t *testing.T) {
 				IngressDeny: true,
 				IngressAllow: []PolicyAllow{{
 					Source:      netip.MustParsePrefix("fd00:10:244::/48"),
-					Destination: netip.MustParseAddr("fd00:10:244::20"),
+					Destination: netip.MustParsePrefix("fd00:10:244::20/128"),
 					Port:        80,
 					Protocol:    ProtocolTCP,
 				}},
@@ -61,9 +61,9 @@ func TestRenderDualStackServiceAndPolicySpike(t *testing.T) {
 		"ip daddr 10.245.0.10 udp dport 53 dnat to 10.244.1.20:53",
 		"ip6 daddr fd00:10:96::a udp dport 53 dnat to [fd00:10:244::20]:53",
 		"ct state established,related accept",
-		"ip saddr 10.244.0.0/16 ip daddr 10.244.1.20 tcp dport 80 accept",
+		"ip saddr 10.244.0.0/16 ip daddr 10.244.1.20/32 tcp dport 80 accept",
 		"ip daddr 10.244.1.20 drop",
-		"ip6 saddr fd00:10:244::/48 ip6 daddr fd00:10:244::20 tcp dport 80 accept",
+		"ip6 saddr fd00:10:244::/48 ip6 daddr fd00:10:244::20/128 tcp dport 80 accept",
 		"ip6 daddr fd00:10:244::20 drop",
 	} {
 		if !strings.Contains(script, want) {

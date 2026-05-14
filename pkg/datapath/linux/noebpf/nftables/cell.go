@@ -13,6 +13,7 @@ import (
 	"github.com/cilium/statedb"
 
 	"github.com/cilium/cilium/pkg/k8s/resource"
+	corev1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/core/v1"
 	networkingv1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/networking/v1"
 	k8sTables "github.com/cilium/cilium/pkg/k8s/tables"
 	"github.com/cilium/cilium/pkg/loadbalancer"
@@ -33,13 +34,15 @@ var Cell = cell.Module(
 type controllerParams struct {
 	cell.In
 
-	JobGroup  job.Group
-	Log       *slog.Logger
-	DB        *statedb.DB
-	Frontends statedb.Table[*loadbalancer.Frontend]
-	Pods      statedb.Table[k8sTables.LocalPod] `optional:"true"`
+	JobGroup   job.Group
+	Log        *slog.Logger
+	DB         *statedb.DB
+	Frontends  statedb.Table[*loadbalancer.Frontend]
+	Pods       statedb.Table[k8sTables.LocalPod]  `optional:"true"`
+	Namespaces statedb.Table[k8sTables.Namespace] `optional:"true"`
 
 	NetworkPolicies resource.Resource[*networkingv1.NetworkPolicy] `optional:"true"`
+	AllPods         resource.Resource[*corev1.Pod]                 `optional:"true"`
 }
 
 func registerController(p controllerParams) {
@@ -52,21 +55,27 @@ func registerController(p controllerParams) {
 		db:              p.DB,
 		frontends:       p.Frontends,
 		pods:            p.Pods,
+		namespaces:      p.Namespaces,
 		networkPolicies: p.NetworkPolicies,
+		allPods:         p.AllPods,
 		runner:          CommandRunner{},
 		policyCache:     map[resource.Key]*networkingv1.NetworkPolicy{},
+		podCache:        map[resource.Key]*corev1.Pod{},
 	}
 	p.JobGroup.Add(job.OneShot("noebpf-nftables-reconciler", c.run))
 }
 
 type controller struct {
-	log       *slog.Logger
-	db        *statedb.DB
-	frontends statedb.Table[*loadbalancer.Frontend]
-	pods      statedb.Table[k8sTables.LocalPod]
+	log        *slog.Logger
+	db         *statedb.DB
+	frontends  statedb.Table[*loadbalancer.Frontend]
+	pods       statedb.Table[k8sTables.LocalPod]
+	namespaces statedb.Table[k8sTables.Namespace]
 
 	networkPolicies resource.Resource[*networkingv1.NetworkPolicy]
+	allPods         resource.Resource[*corev1.Pod]
 	policyCache     map[resource.Key]*networkingv1.NetworkPolicy
+	podCache        map[resource.Key]*corev1.Pod
 	runner          Runner
 }
 
@@ -89,6 +98,10 @@ func (c *controller) run(ctx context.Context, health cell.Health) error {
 	if option.Config.EnableNoEBPFNetworkPolicy && c.networkPolicies != nil {
 		policyEvents = c.networkPolicies.Events(ctx)
 	}
+	var podEvents <-chan resource.Event[*corev1.Pod]
+	if option.Config.EnableNoEBPFNetworkPolicy && c.allPods != nil {
+		podEvents = c.allPods.Events(ctx)
+	}
 
 	for {
 		nextWatch, err := c.reconcile(ctx)
@@ -104,6 +117,13 @@ func (c *controller) run(ctx context.Context, health cell.Health) error {
 			return ctx.Err()
 		case <-nextWatch.frontends:
 		case <-nextWatch.pods:
+		case <-nextWatch.namespaces:
+		case ev, ok := <-podEvents:
+			if !ok {
+				podEvents = nil
+				continue
+			}
+			c.handlePodEvent(ev)
 		case ev, ok := <-policyEvents:
 			if !ok {
 				policyEvents = nil
@@ -118,8 +138,9 @@ func (c *controller) run(ctx context.Context, health cell.Health) error {
 }
 
 type tableWatches struct {
-	frontends <-chan struct{}
-	pods      <-chan struct{}
+	frontends  <-chan struct{}
+	pods       <-chan struct{}
+	namespaces <-chan struct{}
 }
 
 func (c *controller) reconcile(ctx context.Context) (tableWatches, error) {
@@ -133,26 +154,35 @@ func (c *controller) reconcile(ctx context.Context) (tableWatches, error) {
 	}
 	var localPods []k8sTables.LocalPod
 	var podWatch <-chan struct{}
+	var namespaces []k8sTables.Namespace
+	var namespaceWatch <-chan struct{}
 	if option.Config.EnableNoEBPFNetworkPolicy && c.pods != nil {
 		pods, watch := c.pods.AllWatch(txn)
 		localPods = statedb.Collect(pods)
 		podWatch = watch
 	}
+	if option.Config.EnableNoEBPFNetworkPolicy && c.namespaces != nil {
+		nss, watch := c.namespaces.AllWatch(txn)
+		namespaces = statedb.Collect(nss)
+		namespaceWatch = watch
+	}
 
 	state, err := desiredState(
 		collectedFrontends,
 		localPods,
+		c.cachedPods(),
+		namespaces,
 		c.cachedNetworkPolicies(),
 		option.Config.EnableNoEBPFServices,
 		option.Config.EnableNoEBPFNetworkPolicy,
 	)
 	if err != nil {
-		return tableWatches{frontends: frontendWatch, pods: podWatch}, err
+		return tableWatches{frontends: frontendWatch, pods: podWatch, namespaces: namespaceWatch}, err
 	}
 	if err := Apply(ctx, c.runner, state); err != nil {
-		return tableWatches{frontends: frontendWatch, pods: podWatch}, fmt.Errorf("apply desired state: %w", err)
+		return tableWatches{frontends: frontendWatch, pods: podWatch, namespaces: namespaceWatch}, fmt.Errorf("apply desired state: %w", err)
 	}
-	return tableWatches{frontends: frontendWatch, pods: podWatch}, nil
+	return tableWatches{frontends: frontendWatch, pods: podWatch, namespaces: namespaceWatch}, nil
 }
 
 func (c *controller) handlePolicyEvent(ev resource.Event[*networkingv1.NetworkPolicy]) {
@@ -167,6 +197,18 @@ func (c *controller) handlePolicyEvent(ev resource.Event[*networkingv1.NetworkPo
 	ev.Done(err)
 }
 
+func (c *controller) handlePodEvent(ev resource.Event[*corev1.Pod]) {
+	var err error
+	switch ev.Kind {
+	case resource.Upsert:
+		c.podCache[ev.Key] = ev.Object
+	case resource.Delete:
+		delete(c.podCache, ev.Key)
+	case resource.Sync:
+	}
+	ev.Done(err)
+}
+
 func (c *controller) cachedNetworkPolicies() []*networkingv1.NetworkPolicy {
 	policies := make([]*networkingv1.NetworkPolicy, 0, len(c.policyCache))
 	for _, policy := range c.policyCache {
@@ -175,7 +217,15 @@ func (c *controller) cachedNetworkPolicies() []*networkingv1.NetworkPolicy {
 	return policies
 }
 
-func desiredState(frontends []*loadbalancer.Frontend, localPods []k8sTables.LocalPod, networkPolicies []*networkingv1.NetworkPolicy, enableServices, enableNetworkPolicy bool) (DesiredState, error) {
+func (c *controller) cachedPods() []*corev1.Pod {
+	pods := make([]*corev1.Pod, 0, len(c.podCache))
+	for _, pod := range c.podCache {
+		pods = append(pods, pod)
+	}
+	return pods
+}
+
+func desiredState(frontends []*loadbalancer.Frontend, localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, networkPolicies []*networkingv1.NetworkPolicy, enableServices, enableNetworkPolicy bool) (DesiredState, error) {
 	var state DesiredState
 	if enableServices {
 		services, err := ServicesFromFrontends(frontends)
@@ -185,7 +235,7 @@ func desiredState(frontends []*loadbalancer.Frontend, localPods []k8sTables.Loca
 		state.Services = services
 	}
 	if enableNetworkPolicy {
-		policies, err := PoliciesFromK8sNetworkPolicies(localPods, networkPolicies)
+		policies, err := PoliciesFromK8sNetworkPolicies(localPods, allPods, namespaces, networkPolicies)
 		if err != nil {
 			return DesiredState{}, err
 		}
