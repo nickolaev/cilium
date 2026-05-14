@@ -32,6 +32,7 @@ import (
 	linuxrouting "github.com/cilium/cilium/pkg/datapath/linux/routing"
 	"github.com/cilium/cilium/pkg/datapath/linux/safenetlink"
 	loader "github.com/cilium/cilium/pkg/datapath/loader/types"
+	datapathOption "github.com/cilium/cilium/pkg/datapath/option"
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/endpoint/regeneration"
 	endpoint "github.com/cilium/cilium/pkg/endpoint/types"
@@ -1045,6 +1046,14 @@ func NewDatapathConfiguration() models.EndpointDatapathConfiguration {
 		// Indicate to insert a per endpoint route instead of routing
 		// via cilium_host interface
 		config.InstallEndpointRoute = true
+
+		// linux-route mode delegates forwarding and policy attachment to Linux
+		// routing/nftables, so endpoint TC programs must not be required.
+		if datapathOption.IsNoBPFDatapathMode(option.Config.DatapathMode) {
+			disabled := false
+			config.RequireRouting = &disabled
+			return config
+		}
 
 		// Since routing occurs via endpoint interface directly, BPF
 		// program is needed on that device at egress as BPF program on

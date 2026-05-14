@@ -122,6 +122,12 @@ const (
 	// EnableL7Proxy is the name of the option to enable L7 proxy
 	EnableL7Proxy = "enable-l7-proxy"
 
+	// EnableNoEBPFServices enables the experimental linux-route nftables Service backend.
+	EnableNoEBPFServices = "enable-no-ebpf-services"
+
+	// EnableNoEBPFNetworkPolicy enables the experimental linux-route nftables Kubernetes NetworkPolicy backend.
+	EnableNoEBPFNetworkPolicy = "enable-no-ebpf-network-policy"
+
 	// EnableTracing enables tracing mode in the agent.
 	EnableTracing = "enable-tracing"
 
@@ -1400,6 +1406,12 @@ type DaemonConfig struct {
 	// EnableL7Proxy is the option to enable L7 proxy
 	EnableL7Proxy bool
 
+	// EnableNoEBPFServices enables the experimental linux-route nftables Service backend.
+	EnableNoEBPFServices bool
+
+	// EnableNoEBPFNetworkPolicy enables the experimental linux-route nftables Kubernetes NetworkPolicy backend.
+	EnableNoEBPFNetworkPolicy bool
+
 	// BootIDFile is the file containing the boot ID of the node
 	BootIDFile string
 
@@ -2462,6 +2474,8 @@ func (c *DaemonConfig) Populate(logger *slog.Logger, vp *viper.Viper) {
 	c.EnableLocalNodeRoute = vp.GetBool(EnableLocalNodeRoute)
 	c.EnablePolicy = strings.ToLower(vp.GetString(EnablePolicy))
 	c.EnableL7Proxy = vp.GetBool(EnableL7Proxy)
+	c.EnableNoEBPFServices = vp.GetBool(EnableNoEBPFServices)
+	c.EnableNoEBPFNetworkPolicy = vp.GetBool(EnableNoEBPFNetworkPolicy)
 	c.EnableTracing = vp.GetBool(EnableTracing)
 	c.EnableIPIPTermination = vp.GetBool(EnableIPIPTermination)
 	c.UnsafeDaemonConfigOption.EnableIPIPDevices = c.EnableIPIPTermination

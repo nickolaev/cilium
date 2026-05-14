@@ -196,6 +196,12 @@ func InitGlobalFlags(logger *slog.Logger, cmd *cobra.Command, vp *viper.Viper) {
 	flags.Bool(option.EnableEndpointRoutes, defaults.EnableEndpointRoutes, "Use per endpoint routes instead of routing via cilium_host")
 	option.BindEnv(vp, option.EnableEndpointRoutes)
 
+	flags.Bool(option.EnableNoEBPFServices, false, "Enable experimental nftables Service replacement for no-eBPF linux-route mode")
+	option.BindEnv(vp, option.EnableNoEBPFServices)
+
+	flags.Bool(option.EnableNoEBPFNetworkPolicy, false, "Enable experimental nftables Kubernetes NetworkPolicy enforcement for no-eBPF linux-route mode")
+	option.BindEnv(vp, option.EnableNoEBPFNetworkPolicy)
+
 	flags.Int(option.HealthCheckICMPFailureThreshold, defaults.HealthCheckICMPFailureThreshold, "Number of ICMP requests sent for each run of the health checker. If at least one ICMP response is received, the node or endpoint is marked as healthy.")
 	option.BindEnv(vp, option.HealthCheckICMPFailureThreshold)
 
@@ -874,6 +880,10 @@ func initDaemonConfigAndLogging(vp *viper.Viper) {
 
 func validateNoBPFDatapathMode(logger *slog.Logger) {
 	if !datapathOption.IsNoBPFDatapathMode(option.Config.DatapathMode) {
+		if option.Config.EnableNoEBPFServices || option.Config.EnableNoEBPFNetworkPolicy {
+			logging.Fatal(logger, fmt.Sprintf("%s or %s requires %s=%s",
+				option.EnableNoEBPFServices, option.EnableNoEBPFNetworkPolicy, option.DatapathMode, datapathOption.DatapathModeLinuxRoute))
+		}
 		return
 	}
 
@@ -910,8 +920,8 @@ func validateNoBPFDatapathMode(logger *slog.Logger) {
 		}
 	}
 	if option.Config.EnablePolicy != option.NeverEnforce {
-		logging.Fatal(logger, fmt.Sprintf("%s=%s requires %s=%s",
-			option.DatapathMode, option.Config.DatapathMode, option.EnablePolicy, option.NeverEnforce))
+		logging.Fatal(logger, fmt.Sprintf("%s=%s requires %s=%s; %s uses a separate Linux-rule backend",
+			option.DatapathMode, option.Config.DatapathMode, option.EnablePolicy, option.NeverEnforce, option.EnableNoEBPFNetworkPolicy))
 	}
 	if option.Config.TunnelingEnabled() {
 		logging.Fatal(logger, fmt.Sprintf("%s=%s requires native routing with tunneling disabled",

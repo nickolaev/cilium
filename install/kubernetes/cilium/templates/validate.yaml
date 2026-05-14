@@ -240,10 +240,15 @@
   {{- end }}
 {{- end }}
 
+
+{{- if and (or .Values.noEBPF.services.enabled .Values.noEBPF.networkPolicy.enabled) (not (and (hasKey .Values "bpf") (hasKey .Values.bpf "datapathMode") (eq .Values.bpf.datapathMode "linux-route"))) }}
+  {{ fail ".Values.noEBPF.* requires .Values.bpf.datapathMode=linux-route" }}
+{{- end }}
+
 {{/* validate experimental linux-route mode keeps Cilium eBPF forwarding disabled */}}
 {{- if and (hasKey .Values "bpf") (hasKey .Values.bpf "datapathMode") (eq .Values.bpf.datapathMode "linux-route") }}
   {{- if ne (toString .Values.kubeProxyReplacement) "false" }}
-    {{ fail ".Values.bpf.datapathMode=linux-route requires kubeProxyReplacement=false so Services are handled by kube-proxy" }}
+    {{ fail ".Values.bpf.datapathMode=linux-route requires kubeProxyReplacement=false; use noEBPF.services.enabled for experimental Linux-rule service replacement" }}
   {{- end }}
   {{- if .Values.bpf.masquerade }}
     {{ fail ".Values.bpf.datapathMode=linux-route cannot be used with bpf.masquerade=true" }}
@@ -258,7 +263,7 @@
     {{ fail ".Values.bpf.datapathMode=linux-route requires l7Proxy=false" }}
   {{- end }}
   {{- if ne .Values.policyEnforcementMode "never" }}
-    {{ fail ".Values.bpf.datapathMode=linux-route requires policyEnforcementMode=never" }}
+    {{ fail ".Values.bpf.datapathMode=linux-route requires policyEnforcementMode=never; noEBPF.networkPolicy.enabled uses a separate Linux-rule backend" }}
   {{- end }}
   {{- if eq .Values.routingMode "tunnel" }}
     {{ fail ".Values.bpf.datapathMode=linux-route requires native routing, not routingMode=tunnel" }}

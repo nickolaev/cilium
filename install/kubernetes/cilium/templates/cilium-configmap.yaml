@@ -203,6 +203,8 @@ data:
   # default, always and never.
   # https://docs.cilium.io/en/latest/security/policy/intro/#policy-enforcement-modes
   enable-policy: "{{ lower .Values.policyEnforcementMode }}"
+  enable-no-ebpf-services: {{ .Values.noEBPF.services.enabled | quote }}
+  enable-no-ebpf-network-policy: {{ .Values.noEBPF.networkPolicy.enabled | quote }}
 {{- end }}
 
 {{- if hasKey .Values "policyCIDRMatchMode" }}

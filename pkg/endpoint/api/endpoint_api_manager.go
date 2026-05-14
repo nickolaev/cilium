@@ -22,6 +22,7 @@ import (
 	"github.com/cilium/cilium/pkg/annotation"
 	"github.com/cilium/cilium/pkg/api"
 	"github.com/cilium/cilium/pkg/datapath/linux/bandwidth"
+	datapathOption "github.com/cilium/cilium/pkg/datapath/option"
 	"github.com/cilium/cilium/pkg/endpoint"
 	endpointcreator "github.com/cilium/cilium/pkg/endpoint/creator"
 	endpointid "github.com/cilium/cilium/pkg/endpoint/id"
@@ -107,15 +108,22 @@ func (m *endpointAPIManager) CreateEndpoint(ctx context.Context, epTemplate *mod
 			epTemplate.DatapathConfiguration.InstallEndpointRoute = false
 		}
 
-		// Since routing occurs via endpoint interface directly, BPF
-		// program is needed on that device at egress as BPF program on
-		// cilium_host interface is bypassed
-		epTemplate.DatapathConfiguration.RequireEgressProg = true
+		// linux-route mode delegates forwarding and policy attachment to Linux
+		// routing/nftables, so endpoint TC programs must not be required.
+		if datapathOption.IsNoBPFDatapathMode(option.Config.DatapathMode) {
+			disabled := false
+			epTemplate.DatapathConfiguration.RequireRouting = &disabled
+		} else {
+			// Since routing occurs via endpoint interface directly, BPF
+			// program is needed on that device at egress as BPF program on
+			// cilium_host interface is bypassed
+			epTemplate.DatapathConfiguration.RequireEgressProg = true
 
-		// Delegate routing to the Linux stack rather than tail-calling
-		// between BPF programs.
-		disabled := false
-		epTemplate.DatapathConfiguration.RequireRouting = &disabled
+			// Delegate routing to the Linux stack rather than tail-calling
+			// between BPF programs.
+			disabled := false
+			epTemplate.DatapathConfiguration.RequireRouting = &disabled
+		}
 	}
 
 	m.logger.Info("Create endpoint request",

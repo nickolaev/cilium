@@ -2356,6 +2356,15 @@ ipv4:
 ipv6:
   # -- Enable IPv6 support.
   enabled: false
+# -- Experimental no-eBPF Linux-rule backends used with bpf.datapathMode=linux-route.
+noEBPF:
+  services:
+    # -- Enable experimental nftables Service replacement for linux-route mode.
+    enabled: false
+  networkPolicy:
+    # -- Enable experimental nftables Kubernetes NetworkPolicy enforcement for linux-route mode.
+    enabled: false
+
 # -- Configure Kubernetes specific configuration
 k8s:
   # -- requireIPv4PodCIDR enables waiting for Kubernetes to provide the PodCIDR

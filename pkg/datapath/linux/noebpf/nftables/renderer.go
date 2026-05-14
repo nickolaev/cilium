@@ -141,9 +141,6 @@ func (p EndpointPolicy) validate() error {
 		if allow.Source.Addr().Is4() != allow.Destination.Is4() {
 			return fmt.Errorf("policy allow source and destination IP families must match")
 		}
-		if allow.Port == 0 {
-			return fmt.Errorf("policy allow requires a non-zero port")
-		}
 		if err := validateProtocol(allow.Protocol); err != nil {
 			return err
 		}
@@ -171,13 +168,19 @@ func (s ServiceDNAT) dnatRule() string {
 }
 
 func (a PolicyAllow) ingressRule() string {
-	family := prefixFamily(a.Source)
-	return fmt.Sprintf("%s saddr %s %s daddr %s %s dport %d accept",
-		family, a.Source, family, a.Destination, a.Protocol, a.Port)
+	return a.rule()
 }
 
 func (a PolicyAllow) egressRule() string {
+	return a.rule()
+}
+
+func (a PolicyAllow) rule() string {
 	family := prefixFamily(a.Source)
+	if a.Port == 0 {
+		return fmt.Sprintf("%s saddr %s %s daddr %s accept",
+			family, a.Source, family, a.Destination)
+	}
 	return fmt.Sprintf("%s saddr %s %s daddr %s %s dport %d accept",
 		family, a.Source, family, a.Destination, a.Protocol, a.Port)
 }

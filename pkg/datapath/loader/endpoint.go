@@ -178,12 +178,12 @@ func reloadRouteOnlyEndpoint(logger *slog.Logger, db *statedb.DB,
 
 	if ep.RequireEndpointRoute() {
 		if ip := ep.IPv4Address(); ip.IsValid() {
-			if err := upsertEndpointRoute(db, devices, rm, ep, netip.PrefixFrom(ip, ip.BitLen())); err != nil {
+			if err := upsertEndpointRoute(db, devices, rm, ep, endpointRoutePrefix(ip)); err != nil {
 				return fmt.Errorf("upserting IPv4 route for endpoint %s: %w", ep.StringID(), err)
 			}
 		}
 		if ip := ep.IPv6Address(); ip.IsValid() {
-			if err := upsertEndpointRoute(db, devices, rm, ep, netip.PrefixFrom(ip, ip.BitLen())); err != nil {
+			if err := upsertEndpointRoute(db, devices, rm, ep, endpointRoutePrefix(ip)); err != nil {
 				return fmt.Errorf("upserting IPv6 route for endpoint %s: %w", ep.StringID(), err)
 			}
 		}
@@ -359,18 +359,22 @@ func reloadEndpoint(logger *slog.Logger, reg *registry.MapRegistry, db *statedb.
 
 	if ep.RequireEndpointRoute() {
 		if ip := ep.IPv4Address(); ip.IsValid() {
-			if err := upsertEndpointRoute(db, devices, rm, ep, netip.PrefixFrom(ip, ip.BitLen())); err != nil {
+			if err := upsertEndpointRoute(db, devices, rm, ep, endpointRoutePrefix(ip)); err != nil {
 				return fmt.Errorf("upserting IPv4 route for endpoint %s: %w", ep.StringID(), err)
 			}
 		}
 		if ip := ep.IPv6Address(); ip.IsValid() {
-			if err := upsertEndpointRoute(db, devices, rm, ep, netip.PrefixFrom(ip, ip.BitLen())); err != nil {
+			if err := upsertEndpointRoute(db, devices, rm, ep, endpointRoutePrefix(ip)); err != nil {
 				return fmt.Errorf("upserting IPv6 route for endpoint %s: %w", ep.StringID(), err)
 			}
 		}
 	}
 
 	return nil
+}
+
+func endpointRoutePrefix(ip netip.Addr) netip.Prefix {
+	return netip.PrefixFrom(ip, ip.BitLen())
 }
 
 func registerRouteInitializer(p Params) {

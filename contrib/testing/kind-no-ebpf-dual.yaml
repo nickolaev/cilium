@@ -30,6 +30,12 @@ kubeProxyReplacement: false
 socketLB:
   enabled: false
 
+noEBPF:
+  services:
+    enabled: true
+  networkPolicy:
+    enabled: true
+
 # Masquerade/SNAT-sensitive cases are outside the M1 spike.
 enableIPv4Masquerade: false
 enableIPv6Masquerade: false

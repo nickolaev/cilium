@@ -432,15 +432,7 @@ func (l *loader) Reinitialize(ctx context.Context, lnc *config.Config, tunnelCon
 }
 
 func (l *loader) reinitializeRouteOnly(ctx context.Context, lnc *config.Config, p proxy.Proxy) error {
-	sysSettings := []tables.Sysctl{
-		{Name: []string{"net", "ipv4", "conf", "all", "rp_filter"}, Val: "0", IgnoreErr: false},
-		{Name: []string{"net", "ipv4", "fib_multipath_use_neigh"}, Val: "1", IgnoreErr: true},
-		{Name: []string{"kernel", "timer_migration"}, Val: "0", IgnoreErr: true},
-	}
-	if option.Config.EnableIPv6 {
-		sysSettings = append(sysSettings,
-			tables.Sysctl{Name: []string{"net", "ipv6", "conf", "all", "disable_ipv6"}, Val: "0", IgnoreErr: false})
-	}
+	sysSettings := routeOnlySysctlSettings(option.Config.EnableIPv6)
 	if err := l.sysctl.ApplySettings(sysSettings); err != nil {
 		return err
 	}
@@ -479,4 +471,17 @@ func (l *loader) reinitializeRouteOnly(ctx context.Context, lnc *config.Config, 
 		close(l.hostDpInitialized)
 	})
 	return nil
+}
+
+func routeOnlySysctlSettings(enableIPv6 bool) []tables.Sysctl {
+	sysSettings := []tables.Sysctl{
+		{Name: []string{"net", "ipv4", "conf", "all", "rp_filter"}, Val: "0", IgnoreErr: false},
+		{Name: []string{"net", "ipv4", "fib_multipath_use_neigh"}, Val: "1", IgnoreErr: true},
+		{Name: []string{"kernel", "timer_migration"}, Val: "0", IgnoreErr: true},
+	}
+	if enableIPv6 {
+		sysSettings = append(sysSettings,
+			tables.Sysctl{Name: []string{"net", "ipv6", "conf", "all", "disable_ipv6"}, Val: "0", IgnoreErr: false})
+	}
+	return sysSettings
 }
