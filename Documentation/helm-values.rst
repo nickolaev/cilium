@@ -3204,6 +3204,18 @@
      - Enable RFC6052-prefixed translation
      - bool
      - ``false``
+   * - :spelling:ignore:`noEBPF`
+     - Experimental no-eBPF Linux-rule backends used with bpf.datapathMode=linux-route.
+     - object
+     - ``{"networkPolicy":{"enabled":false},"services":{"enabled":false}}``
+   * - :spelling:ignore:`noEBPF.networkPolicy.enabled`
+     - Enable experimental nftables Kubernetes NetworkPolicy enforcement for linux-route mode.
+     - bool
+     - ``false``
+   * - :spelling:ignore:`noEBPF.services.enabled`
+     - Enable experimental nftables Service replacement for linux-route mode.
+     - bool
+     - ``false``
    * - :spelling:ignore:`nodeIPAM.enabled`
      - Configure Node IPAM ref: https://docs.cilium.io/en/stable/network/node-ipam/
      - bool

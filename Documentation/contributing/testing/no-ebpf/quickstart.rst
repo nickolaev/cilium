@@ -91,6 +91,12 @@ Useful options:
    $ NOEBPF_RUN_CONNECTIVITY=0 contrib/testing/noebpf-local-ci.sh
    $ NOEBPF_RUN_CONNECTIVITY_KNP=0 contrib/testing/noebpf-local-ci.sh
 
+When ``NOEBPF_INSTALL=1`` is used, the runner pins ``k8sServiceHost`` to the
+current kind control-plane node IP. This is intentional for kube-proxy-free
+clusters: if Docker or kind IP addresses changed since the last install, Cilium
+would otherwise keep trying to contact the stale API server address before the
+Service datapath is available.
+
 Connectivity coverage
 ---------------------
 

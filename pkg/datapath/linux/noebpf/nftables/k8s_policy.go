@@ -27,6 +27,9 @@ func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*c
 		if np == nil {
 			continue
 		}
+		if len(np.Spec.PodSelector.MatchExpressions) > 0 {
+			return nil, fmt.Errorf("networkpolicy %s/%s podSelector: matchExpressions are not supported", np.Namespace, np.Name)
+		}
 		for i := range pods {
 			pod := pods[i]
 			if !pod.Local || pod.Namespace != np.Namespace || !labelSelectorMatches(np.Spec.PodSelector, pod.Labels) {
@@ -285,7 +288,8 @@ func labelSelectorMatches(sel metav1.LabelSelector, labels map[string]string) bo
 			return false
 		}
 	}
-	// M1 keeps matchExpressions out of the datapath compiler. Treat them as not
-	// matching rather than accidentally over-selecting endpoints.
+	// PoliciesFromK8sNetworkPolicies rejects matchExpressions before calling this
+	// helper. Keep the defensive false here so direct helper usage cannot
+	// accidentally over-select endpoints.
 	return len(sel.MatchExpressions) == 0
 }

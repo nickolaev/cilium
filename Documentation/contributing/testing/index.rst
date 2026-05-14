@@ -29,6 +29,7 @@ information about Cilium's CI infrastructure.
    scalability
    unit
    bpf
+   no-ebpf/index
 
 The best way to get help if you get stuck is to ask a question on the `Cilium
 Slack`_. With Cilium contributors across the globe, there is almost always

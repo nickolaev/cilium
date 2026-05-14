@@ -92,11 +92,15 @@ Finally, to run tests:
 Experimental route-only datapath smoke
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The experimental ``bpf.datapathMode=linux-route`` mode is intended for a
-minimal no-BPF-forwarding MVP. In this mode, pod forwarding is expected to use
-Linux routes and Kubernetes Services are expected to remain handled by
+The experimental ``bpf.datapathMode=linux-route`` mode can be run as a
+minimal route-only smoke. In this route-only profile, pod forwarding is expected
+to use Linux routes and Kubernetes Services are expected to remain handled by
 ``kube-proxy``. Do not create the kind cluster with ``kube-proxy`` disabled for
 this smoke test.
+
+For the newer product-demo profile that disables kube-proxy and enables the
+experimental no-eBPF nftables Service and Kubernetes NetworkPolicy backends, see
+:doc:`no-ebpf/quickstart`.
 
 .. code-block:: shell-session
 

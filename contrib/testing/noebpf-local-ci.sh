@@ -49,10 +49,19 @@ MSG
   fi
 }
 
+detect_control_plane_ip() {
+  local ctx="$1"
+  "${KUBECTL}" --context "$ctx" get nodes \
+    -l node-role.kubernetes.io/control-plane \
+    -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' | awk '{print $1}'
+}
+
 install_noebpf() {
   local ctx="$1"
   local verb="install"
   local policy_values=()
+  local api_host
+  local api_values=()
   if [[ "$ctx" == "$NOEBPF_P3_CONTEXT" ]]; then
     policy_values=(--values contrib/testing/kind-no-ebpf-dual-policy.yaml)
   fi
@@ -60,11 +69,20 @@ install_noebpf() {
     verb="upgrade"
   fi
 
+  # kube-proxy-free kind clusters cannot rely on the kubernetes ClusterIP before
+  # Cilium is up. Pin the agent/operator to the current control-plane node IP so
+  # local clusters recover after Docker/kind IP churn.
+  api_host="$(detect_control_plane_ip "$ctx")"
+  if [[ -n "$api_host" ]]; then
+    api_values=(--set "k8sServiceHost=${api_host}" --set k8sServicePort=6443)
+  fi
+
   run "${CILIUM_CLI}" "$verb" \
     --context "$ctx" \
     --chart-directory install/kubernetes/cilium \
     --values contrib/testing/kind-no-ebpf-dual.yaml \
     "${policy_values[@]}" \
+    "${api_values[@]}" \
     --wait
 
   if [[ "$verb" == "upgrade" && "$NOEBPF_RESTART_ON_UPGRADE" == "1" ]]; then
@@ -106,10 +124,25 @@ run_connectivity() {
 
 require_cmd go
 require_cmd git
+require_cmd python3
 require_cmd "${KUBECTL}"
 require_cmd "${CILIUM_CLI}"
 
 run git diff --check
+run python3 -m json.tool install/kubernetes/cilium/values.schema.json >/dev/null
+
+if command -v helm >/dev/null 2>&1; then
+  run helm template cilium install/kubernetes/cilium \
+    --values contrib/testing/kind-no-ebpf-dual.yaml \
+    >/dev/null
+  run helm template cilium install/kubernetes/cilium \
+    --values contrib/testing/kind-no-ebpf-dual.yaml \
+    --values contrib/testing/kind-no-ebpf-dual-policy.yaml \
+    >/dev/null
+else
+  log "helm not found; skipping no-eBPF Helm render gate"
+fi
+
 run go test ./pkg/datapath/connector ./pkg/datapath/loader ./pkg/datapath/linux/noebpf/... ./pkg/status ./pkg/client
 
 if [[ "$NOEBPF_RUN_BROAD_GO" == "1" ]]; then
