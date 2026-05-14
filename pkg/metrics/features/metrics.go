@@ -174,11 +174,13 @@ var (
 	defaultConfiguredDatapathModes = []string{
 		datapathOption.DatapathModeAuto,
 		datapathOption.DatapathModeVeth,
+		datapathOption.DatapathModeLinuxRoute,
 		datapathOption.DatapathModeNetkit,
 		datapathOption.DatapathModeNetkitL2,
 	}
 	defaultOperationalDatapathModes = []string{
 		datapathOption.DatapathModeVeth,
+		datapathOption.DatapathModeLinuxRoute,
 		datapathOption.DatapathModeNetkit,
 		datapathOption.DatapathModeNetkitL2,
 	}

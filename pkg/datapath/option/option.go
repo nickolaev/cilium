@@ -13,6 +13,11 @@ const (
 	// attached to a network via veth pairs).
 	DatapathModeVeth = "veth"
 
+	// DatapathModeLinuxRoute specifies an experimental datapath mode where
+	// workloads are attached via veth pairs and forwarded by the Linux routing
+	// stack instead of Cilium eBPF programs.
+	DatapathModeLinuxRoute = "linux-route"
+
 	// DatapathModeNetkit specifies netkit datapath mode (i.e. containers
 	// are attached to a network via netkit pairs). netkit is created in
 	// L3 mode.
@@ -23,3 +28,7 @@ const (
 	// L2 mode.
 	DatapathModeNetkitL2 = "netkit-l2"
 )
+
+func IsNoBPFDatapathMode(mode string) bool {
+	return mode == DatapathModeLinuxRoute
+}

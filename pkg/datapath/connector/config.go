@@ -97,7 +97,8 @@ func (cc *config) GetLinkCompatibility(ifName string) (Mode, bool, error) {
 		}
 	}
 
-	linkCompatible := cc.operationalMode == linkMode
+	linkCompatible := cc.operationalMode == linkMode ||
+		(cc.operationalMode == ModeLinuxRoute && linkMode == ModeVeth)
 
 	return linkMode, linkCompatible, nil
 }
@@ -181,6 +182,9 @@ func newConfig(p connectorParams) (*config, error) {
 		} else {
 			operationalMode = ModeNetkit
 		}
+
+	case ModeLinuxRoute:
+		operationalMode = configuredMode
 
 	case ModeNetkit, ModeNetkitL2:
 		if err := canUseNetkit(p); err != nil {

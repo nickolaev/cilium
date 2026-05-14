@@ -743,8 +743,8 @@ bpf:
   # supported kernels.
   # @default -- `true`
   enableTCX: true
-  # -- (string) Mode for Pod devices for the core datapath (auto, veth, netkit, netkit-l2).
-  # Note netkit is incompatible with TPROXY (`bpf.tproxy`).
+  # -- (string) Mode for Pod devices for the core datapath (auto, veth, linux-route, netkit, netkit-l2).
+  # Note linux-route is an experimental no-BPF forwarding mode and netkit is incompatible with TPROXY (`bpf.tproxy`).
   # @default -- `veth`
   datapathMode: veth
 # -- Enable BPF clock source probing for more efficient tick retrieval.

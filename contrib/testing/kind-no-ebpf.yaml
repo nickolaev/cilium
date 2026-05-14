@@ -1,0 +1,19 @@
+bpf:
+  datapathMode: linux-route
+  masquerade: false
+
+routingMode: native
+autoDirectNodeRoutes: true
+endpointRoutes:
+  enabled: true
+
+kubeProxyReplacement: false
+enableIPv4Masquerade: false
+enableIPv6Masquerade: false
+l7Proxy: false
+policyEnforcementMode: never
+
+socketLB:
+  enabled: false
+hostFirewall:
+  enabled: false

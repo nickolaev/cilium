@@ -255,6 +255,8 @@ func (d *statusCollector) getAttachModeStatus() models.AttachMode {
 func (d *statusCollector) getDatapathModeStatus() models.DatapathMode {
 	mode := models.DatapathModeVeth
 	switch d.statusParams.ConnectorConfig.GetOperationalMode().String() {
+	case datapathOption.DatapathModeLinuxRoute:
+		mode = models.DatapathModeLinuxRoute
 	case datapathOption.DatapathModeNetkit:
 		mode = models.DatapathModeNetkit
 	case datapathOption.DatapathModeNetkitL2:
@@ -268,6 +270,8 @@ func (d *statusCollector) getConfiguredDatapathModeStatus() models.ConfiguredDat
 	switch d.statusParams.ConnectorConfig.GetConfiguredMode().String() {
 	case datapathOption.DatapathModeAuto:
 		mode = models.ConfiguredDatapathModeAuto
+	case datapathOption.DatapathModeLinuxRoute:
+		mode = models.ConfiguredDatapathModeLinuxRoute
 	case datapathOption.DatapathModeNetkit:
 		mode = models.ConfiguredDatapathModeNetkit
 	case datapathOption.DatapathModeNetkitL2:

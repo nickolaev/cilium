@@ -361,7 +361,7 @@
      - int
      - ``524288``
    * - :spelling:ignore:`bpf.datapathMode`
-     - Mode for Pod devices for the core datapath (auto, veth, netkit, netkit-l2). Note netkit is incompatible with TPROXY (\ ``bpf.tproxy``\ ).
+     - Mode for Pod devices for the core datapath (auto, veth, linux-route, netkit, netkit-l2). Note linux-route is an experimental no-BPF forwarding mode and netkit is incompatible with TPROXY (\ ``bpf.tproxy``\ ).
      - string
      - ``veth``
    * - :spelling:ignore:`bpf.disableExternalIPMitigation`

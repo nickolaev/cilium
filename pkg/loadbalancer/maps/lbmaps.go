@@ -19,10 +19,12 @@ import (
 
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/byteorder"
+	datapathOption "github.com/cilium/cilium/pkg/datapath/option"
 	"github.com/cilium/cilium/pkg/loadbalancer"
 	"github.com/cilium/cilium/pkg/lock"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/maglev"
+	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/u8proto"
 )
 
@@ -38,6 +40,10 @@ type lbmapsParams struct {
 }
 
 func newLBMaps(p lbmapsParams) bpf.MapOut[LBMaps] {
+	if datapathOption.IsNoBPFDatapathMode(option.Config.DatapathMode) {
+		return bpf.NewMapOut(NewFakeLBMaps())
+	}
+
 	pinned := true
 
 	if p.TestConfig != nil {

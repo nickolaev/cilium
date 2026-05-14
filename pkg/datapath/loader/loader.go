@@ -18,6 +18,7 @@ import (
 	routeReconciler "github.com/cilium/cilium/pkg/datapath/linux/route/reconciler"
 	"github.com/cilium/cilium/pkg/datapath/linux/sysctl"
 	"github.com/cilium/cilium/pkg/datapath/loader/types"
+	datapathOption "github.com/cilium/cilium/pkg/datapath/option"
 	"github.com/cilium/cilium/pkg/datapath/prefilter"
 	"github.com/cilium/cilium/pkg/datapath/tables"
 	"github.com/cilium/cilium/pkg/defaults"
@@ -57,6 +58,7 @@ type loader struct {
 	db           *statedb.DB
 	devices      statedb.Table[*tables.Device]
 	routeManager *routeReconciler.DesiredRouteManager
+	routeOnly    bool
 }
 
 type Params struct {
@@ -97,6 +99,8 @@ func newLoader(p Params) *loader {
 
 		db:      p.DB,
 		devices: p.Devices,
+
+		routeOnly: datapathOption.IsNoBPFDatapathMode(option.Config.DatapathMode),
 	}
 }
 

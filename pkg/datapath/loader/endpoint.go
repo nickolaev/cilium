@@ -81,6 +81,20 @@ func endpointMapRenames(ep endpoint.Config, lnc *config.Config) (renames []map[s
 // goroutine completes compilation of the template, all other CompileOrLoad
 // invocations will be released.
 func (l *loader) ReloadDatapath(ctx context.Context, ep endpoint.Endpoint, lnc *config.Config, stats *metrics.SpanStat) (string, error) {
+	if l.routeOnly {
+		if ep.IsHost() {
+			l.hostDpInitializedOnce.Do(func() {
+				l.logger.Debug("Initialized route-only host datapath")
+				close(l.hostDpInitialized)
+			})
+			return "route-only", nil
+		}
+		if err := reloadRouteOnlyEndpoint(l.logger, l.db, l.devices, l.routeManager, ep); err != nil {
+			return "", err
+		}
+		return "route-only", nil
+	}
+
 	dirs := directoryInfo{
 		Library: option.Config.BpfDir,
 		Runtime: option.Config.StateDir,
@@ -112,6 +126,64 @@ func (l *loader) ReloadDatapath(ctx context.Context, ep endpoint.Endpoint, lnc *
 	err = reloadEndpoint(l.logger, l.registry, l.db, l.devices, l.routeManager, ep, lnc, spec)
 	stats.BpfLoadProg.End(err == nil)
 	return hash, err
+}
+
+func reloadRouteOnlyEndpoint(logger *slog.Logger, db *statedb.DB,
+	devices statedb.Table[*tables.Device], rm *routeReconciler.DesiredRouteManager,
+	ep endpoint.Endpoint) error {
+
+	device := ep.InterfaceName()
+	iface, err := safenetlink.LinkByName(device)
+	if err != nil {
+		return fmt.Errorf("retrieving device %s: %w", device, err)
+	}
+
+	linkDir := bpffsEndpointLinksDir(bpf.CiliumPath(), ep)
+	if err := detachSKBProgram(logger, iface, symbolFromEndpoint, linkDir, netlink.HANDLE_MIN_INGRESS); err != nil {
+		logger.Debug("Failed to detach route-only endpoint ingress program",
+			logfields.Error, err,
+			logfields.Device, device,
+		)
+	}
+	if err := detachSKBProgram(logger, iface, symbolToEndpoint, linkDir, netlink.HANDLE_MIN_EGRESS); err != nil {
+		logger.Debug("Failed to detach route-only endpoint egress program",
+			logfields.Error, err,
+			logfields.Device, device,
+		)
+	}
+	if err := removeTCFilters(iface, netlink.HANDLE_MIN_INGRESS); err != nil {
+		logger.Debug("Failed to remove route-only endpoint ingress filters",
+			logfields.Error, err,
+			logfields.Device, device,
+		)
+	}
+	if err := removeTCFilters(iface, netlink.HANDLE_MIN_EGRESS); err != nil {
+		logger.Debug("Failed to remove route-only endpoint egress filters",
+			logfields.Error, err,
+			logfields.Device, device,
+		)
+	}
+	if err := bpf.Remove(linkDir); err != nil {
+		logger.Debug("Failed to remove route-only endpoint bpffs links",
+			logfields.Error, err,
+			logfields.BPFFSEndpointLinksDir, linkDir,
+		)
+	}
+
+	if ep.RequireEndpointRoute() {
+		if ip := ep.IPv4Address(); ip.IsValid() {
+			if err := upsertEndpointRoute(db, devices, rm, ep, netip.PrefixFrom(ip, ip.BitLen())); err != nil {
+				return fmt.Errorf("upserting IPv4 route for endpoint %s: %w", ep.StringID(), err)
+			}
+		}
+		if ip := ep.IPv6Address(); ip.IsValid() {
+			if err := upsertEndpointRoute(db, devices, rm, ep, netip.PrefixFrom(ip, ip.BitLen())); err != nil {
+				return fmt.Errorf("upserting IPv6 route for endpoint %s: %w", ep.StringID(), err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // Unload removes the datapath specific program aspects
@@ -172,10 +244,16 @@ func (l *loader) Unload(ep endpoint.Endpoint) {
 // EndpointHash hashes the specified endpoint configuration with the current
 // datapath hash cache and returns the hash as string.
 func (l *loader) EndpointHash(cfg endpoint.Config, lnCfg *config.Config) (string, error) {
+	if l.routeOnly {
+		return "route-only", nil
+	}
 	return l.templateCache.baseHash.hashEndpoint(l.templateCache, lnCfg, cfg)
 }
 
 func (l *loader) WriteEndpointConfig(w io.Writer, e endpoint.Config) error {
+	if l.routeOnly {
+		return nil
+	}
 	return l.configWriter.WriteEndpointConfig(w, e)
 }
 

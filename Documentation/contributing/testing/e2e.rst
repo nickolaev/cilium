@@ -89,6 +89,47 @@ Finally, to run tests:
     ...
     ✅ All 32 tests (263 actions) successful, 2 tests skipped, 1 scenarios skipped.
 
+Experimental route-only datapath smoke
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The experimental ``bpf.datapathMode=linux-route`` mode is intended for a
+minimal no-BPF-forwarding MVP. In this mode, pod forwarding is expected to use
+Linux routes and Kubernetes Services are expected to remain handled by
+``kube-proxy``. Do not create the kind cluster with ``kube-proxy`` disabled for
+this smoke test.
+
+.. code-block:: shell-session
+
+    $ cd cilium/
+    $ ./contrib/scripts/kind.sh "" 2 "" "" "iptables" "ipv4"
+    $ make kind-image
+    $ cilium install --wait \
+        --chart-directory=$GOPATH/src/github.com/cilium/cilium/install/kubernetes/cilium \
+        --set image.override=localhost:5000/cilium/cilium-dev:local \
+        --set image.pullPolicy=Never \
+        --set operator.image.override=localhost:5000/cilium/operator-generic:local \
+        --set operator.image.pullPolicy=Never \
+        --set bpf.datapathMode=linux-route \
+        --set routingMode=native \
+        --set autoDirectNodeRoutes=true \
+        --set endpointRoutes.enabled=true \
+        --set kubeProxyReplacement=false \
+        --set bpf.masquerade=false \
+        --set enableIPv4Masquerade=false \
+        --set l7Proxy=false \
+        --set policyEnforcementMode=never
+
+The smoke claim is deliberately narrow:
+
+* same-node and cross-node pod-to-pod connectivity works;
+* ClusterIP and DNS work through ``kube-proxy``;
+* Cilium does not attach its TC/XDP forwarding programs to workload, host, or
+  native devices.
+
+This mode does not claim support for NetworkPolicy enforcement, Cilium
+kube-proxy replacement, socket LB, BPF masquerading, host firewall, Hubble
+datapath events, XDP acceleration, or bandwidth manager coverage.
+
 Alternatively, you can select which tests to run:
 
 .. code-block:: shell-session

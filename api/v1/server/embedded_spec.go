@@ -2225,6 +2225,7 @@ func init() {
       "enum": [
         "auto",
         "veth",
+        "linux-route",
         "netkit",
         "netkit-l2"
       ]
@@ -2495,6 +2496,7 @@ func init() {
       "type": "string",
       "enum": [
         "veth",
+        "linux-route",
         "netkit",
         "netkit-l2"
       ]
@@ -7566,6 +7568,7 @@ func init() {
       "enum": [
         "auto",
         "veth",
+        "linux-route",
         "netkit",
         "netkit-l2"
       ]
@@ -7902,6 +7905,7 @@ func init() {
       "type": "string",
       "enum": [
         "veth",
+        "linux-route",
         "netkit",
         "netkit-l2"
       ]

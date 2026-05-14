@@ -21,6 +21,7 @@ import (
 
 	"github.com/cilium/cilium/pkg/datapath/linux/probes"
 	"github.com/cilium/cilium/pkg/datapath/linux/sysctl"
+	datapathOption "github.com/cilium/cilium/pkg/datapath/option"
 	"github.com/cilium/cilium/pkg/datapath/tables"
 	"github.com/cilium/cilium/pkg/datapath/tunnel"
 	"github.com/cilium/cilium/pkg/kpr"
@@ -43,6 +44,17 @@ type kprInitializer struct {
 }
 
 func (r *kprInitializer) InitKubeProxyReplacementOptions() error {
+	if datapathOption.IsNoBPFDatapathMode(option.Config.DatapathMode) {
+		if r.kprCfg.KubeProxyReplacement {
+			return fmt.Errorf("%s=%s cannot be used with %s=true",
+				option.DatapathMode, option.Config.DatapathMode, option.KubeProxyReplacement)
+		}
+		if r.kprCfg.EnableSocketLB {
+			return fmt.Errorf("%s=%s cannot be used with %s=true",
+				option.DatapathMode, option.Config.DatapathMode, option.EnableSocketLB)
+		}
+	}
+
 	if !option.Config.UnsafeDaemonConfigOption.EnableHostLegacyRouting {
 		msg := ""
 		switch {

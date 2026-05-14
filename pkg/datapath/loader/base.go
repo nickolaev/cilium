@@ -261,6 +261,12 @@ func (l *loader) ReinitializeHostDev(ctx context.Context, mtu int) error {
 	if err != nil {
 		return fmt.Errorf("failed to setup base devices: %w", err)
 	}
+	if l.routeOnly {
+		l.hostDpInitializedOnce.Do(func() {
+			l.logger.Debug("Initialized route-only host datapath")
+			close(l.hostDpInitialized)
+		})
+	}
 
 	return nil
 }
@@ -270,6 +276,10 @@ func (l *loader) ReinitializeHostDev(ctx context.Context, mtu int) error {
 // locally detected prefixes. It may be run upon initial Cilium startup, after
 // restore from a previous Cilium run, or during regular Cilium operation.
 func (l *loader) Reinitialize(ctx context.Context, lnc *config.Config, tunnelConfig tunnel.Config, iptMgr iptables.Manager, p proxy.Proxy, bigtcp bigtcp.Config) error {
+	if l.routeOnly {
+		return l.reinitializeRouteOnly(ctx, lnc, p)
+	}
+
 	sysSettings := []tables.Sysctl{
 		{Name: []string{"net", "core", "bpf_jit_enable"}, Val: "1", IgnoreErr: true, Warn: "Unable to ensure that BPF JIT compilation is enabled. This can be ignored when Cilium is running inside non-host network namespace (e.g. with kind or minikube)"},
 		{Name: []string{"net", "ipv4", "conf", "all", "rp_filter"}, Val: "0", IgnoreErr: false},
@@ -418,5 +428,55 @@ func (l *loader) Reinitialize(ctx context.Context, lnc *config.Config, tunnelCon
 		return err
 	}
 
+	return nil
+}
+
+func (l *loader) reinitializeRouteOnly(ctx context.Context, lnc *config.Config, p proxy.Proxy) error {
+	sysSettings := []tables.Sysctl{
+		{Name: []string{"net", "ipv4", "conf", "all", "rp_filter"}, Val: "0", IgnoreErr: false},
+		{Name: []string{"net", "ipv4", "fib_multipath_use_neigh"}, Val: "1", IgnoreErr: true},
+		{Name: []string{"kernel", "timer_migration"}, Val: "0", IgnoreErr: true},
+	}
+	if option.Config.EnableIPv6 {
+		sysSettings = append(sysSettings,
+			tables.Sysctl{Name: []string{"net", "ipv6", "conf", "all", "disable_ipv6"}, Val: "0", IgnoreErr: false})
+	}
+	if err := l.sysctl.ApplySettings(sysSettings); err != nil {
+		return err
+	}
+
+	var internalIPv4, internalIPv6 net.IP
+	if option.Config.EnableIPv4 {
+		internalIPv4 = net.IP(lnc.CiliumInternalIPv4.AsSlice())
+	}
+	if option.Config.EnableIPv6 {
+		internalIPv6 = net.IP(lnc.CiliumInternalIPv6.AsSlice())
+	}
+
+	hostDev, _, err := setupBaseDevice(l.logger, l.sysctl, lnc.DeviceMTU)
+	if err != nil {
+		return fmt.Errorf("failed to setup base devices: %w", err)
+	}
+	if err := addHostDeviceAddr(hostDev, internalIPv4, internalIPv6); err != nil {
+		return fmt.Errorf("failed to add internal IP address to %s: %w", hostDev.Attrs().Name, err)
+	}
+
+	if err := cleanIngressQdisc(l.logger, lnc.DeviceNames()); err != nil {
+		l.logger.Warn("Unable to clean up ingress qdiscs", logfields.Error, err)
+		return err
+	}
+	if err := socketlb.Disable(l.logger); err != nil {
+		return err
+	}
+	if err := l.nodeConfigNotifier.Notify(*lnc); err != nil {
+		return err
+	}
+	if err := p.ReinstallRoutingRules(ctx, lnc.RouteMTU, false, false); err != nil {
+		return err
+	}
+	l.hostDpInitializedOnce.Do(func() {
+		l.logger.Debug("Initialized route-only host datapath")
+		close(l.hostDpInitialized)
+	})
 	return nil
 }

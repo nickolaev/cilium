@@ -240,6 +240,31 @@
   {{- end }}
 {{- end }}
 
+{{/* validate experimental linux-route mode keeps Cilium eBPF forwarding disabled */}}
+{{- if and (hasKey .Values "bpf") (hasKey .Values.bpf "datapathMode") (eq .Values.bpf.datapathMode "linux-route") }}
+  {{- if ne (toString .Values.kubeProxyReplacement) "false" }}
+    {{ fail ".Values.bpf.datapathMode=linux-route requires kubeProxyReplacement=false so Services are handled by kube-proxy" }}
+  {{- end }}
+  {{- if .Values.bpf.masquerade }}
+    {{ fail ".Values.bpf.datapathMode=linux-route cannot be used with bpf.masquerade=true" }}
+  {{- end }}
+  {{- if .Values.socketLB.enabled }}
+    {{ fail ".Values.bpf.datapathMode=linux-route cannot be used with socketLB.enabled=true" }}
+  {{- end }}
+  {{- if .Values.hostFirewall.enabled }}
+    {{ fail ".Values.bpf.datapathMode=linux-route cannot be used with hostFirewall.enabled=true" }}
+  {{- end }}
+  {{- if .Values.l7Proxy }}
+    {{ fail ".Values.bpf.datapathMode=linux-route requires l7Proxy=false" }}
+  {{- end }}
+  {{- if ne .Values.policyEnforcementMode "never" }}
+    {{ fail ".Values.bpf.datapathMode=linux-route requires policyEnforcementMode=never" }}
+  {{- end }}
+  {{- if eq .Values.routingMode "tunnel" }}
+    {{ fail ".Values.bpf.datapathMode=linux-route requires native routing, not routingMode=tunnel" }}
+  {{- end }}
+{{- end }}
+
 {{/* validate IPAM ENI */}}
 {{- if and (eq .Values.ipam.mode "eni") (not .Values.eni.enabled) }}
   {{ fail "ipam.mode=eni requires eni.enabled=true" }}

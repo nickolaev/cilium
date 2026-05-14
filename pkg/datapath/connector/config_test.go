@@ -62,6 +62,12 @@ var (
 		EnableIPv6:      true,
 		EnableBPFTProxy: true,
 	}
+	daemonConfigLinuxRoute = option.DaemonConfig{
+		DatapathMode:    datapathOption.DatapathModeLinuxRoute,
+		EnableIPv4:      true,
+		EnableIPv6:      true,
+		EnableBPFTProxy: false,
+	}
 	daemonConfigNetkit = option.DaemonConfig{
 		DatapathMode:    datapathOption.DatapathModeNetkit,
 		EnableIPv4:      true,
@@ -149,6 +155,10 @@ var (
 		configuredMode:  ModeVeth,
 		operationalMode: ModeVeth,
 	}
+	connectorConfigLinuxRoute = config{
+		configuredMode:  ModeLinuxRoute,
+		operationalMode: ModeLinuxRoute,
+	}
 	connectorConfigNetkit = config{
 		configuredMode:  ModeNetkit,
 		operationalMode: ModeNetkit,
@@ -218,6 +228,15 @@ func TestNewConfig(t *testing.T) {
 			wgAgent:        fakewireguard.NewTestAgent(wgConfigDisabled),
 			tunnelConfig:   tunnelConfigNative,
 			expectedConfig: &connectorConfigVeth,
+			shouldError:    false,
+			shouldSkip:     false,
+		},
+		{
+			name:           "datapath-linux-route",
+			daemonConfig:   &daemonConfigLinuxRoute,
+			wgAgent:        fakewireguard.NewTestAgent(wgConfigDisabled),
+			tunnelConfig:   tunnelConfigNative,
+			expectedConfig: &connectorConfigLinuxRoute,
 			shouldError:    false,
 			shouldSkip:     false,
 		},

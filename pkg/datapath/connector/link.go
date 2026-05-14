@@ -78,7 +78,7 @@ func NewLinkPair(
 	var err error
 
 	switch mode {
-	case ModeVeth:
+	case ModeVeth, ModeLinuxRoute:
 		hostLink, peerLink, err = setupVethPair(
 			log,
 			cfg,

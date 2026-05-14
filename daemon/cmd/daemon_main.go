@@ -187,8 +187,9 @@ func InitGlobalFlags(logger *slog.Logger, cmd *cobra.Command, vp *viper.Viper) {
 	option.BindEnv(vp, option.DebugVerbose)
 
 	flags.String(option.DatapathMode, defaults.DatapathMode,
-		fmt.Sprintf("Datapath mode name (%s, %s, %s, %s)",
+		fmt.Sprintf("Datapath mode name (%s, %s, %s, %s, %s)",
 			datapathOption.DatapathModeAuto, datapathOption.DatapathModeVeth,
+			datapathOption.DatapathModeLinuxRoute,
 			datapathOption.DatapathModeNetkit, datapathOption.DatapathModeNetkitL2))
 	option.BindEnv(vp, option.DatapathMode)
 
@@ -871,6 +872,53 @@ func initDaemonConfigAndLogging(vp *viper.Viper) {
 	time.MaxInternalTimerDelay = vp.GetDuration(option.MaxInternalTimerDelay)
 }
 
+func validateNoBPFDatapathMode(logger *slog.Logger) {
+	if !datapathOption.IsNoBPFDatapathMode(option.Config.DatapathMode) {
+		return
+	}
+
+	if !option.Config.EnableEndpointRoutes {
+		option.Config.EnableEndpointRoutes = true
+		logger.Info(
+			fmt.Sprintf("Auto-set %s=true for %s=%s",
+				option.EnableEndpointRoutes, option.DatapathMode, option.Config.DatapathMode),
+		)
+	}
+	if !option.Config.UnsafeDaemonConfigOption.EnableHostLegacyRouting {
+		option.Config.UnsafeDaemonConfigOption.EnableHostLegacyRouting = true
+		logger.Info(
+			fmt.Sprintf("Auto-set %s=true for %s=%s",
+				option.EnableHostLegacyRouting, option.DatapathMode, option.Config.DatapathMode),
+		)
+	}
+
+	incompatible := []struct {
+		name    string
+		enabled bool
+	}{
+		{name: option.EnableBPFMasquerade, enabled: option.Config.EnableBPFMasquerade},
+		{name: option.EnableBPFTProxy, enabled: option.Config.EnableBPFTProxy},
+		{name: option.EnableHostFirewall, enabled: option.Config.EnableHostFirewall},
+		{name: option.EnableL7Proxy, enabled: option.Config.EnableL7Proxy},
+		{name: option.EnableTracing, enabled: option.Config.EnableTracing},
+		{name: option.EnableXDPPrefilter, enabled: option.Config.EnableXDPPrefilter},
+	}
+	for _, opt := range incompatible {
+		if opt.enabled {
+			logging.Fatal(logger, fmt.Sprintf("%s=%s cannot be used with %s=true",
+				option.DatapathMode, option.Config.DatapathMode, opt.name))
+		}
+	}
+	if option.Config.EnablePolicy != option.NeverEnforce {
+		logging.Fatal(logger, fmt.Sprintf("%s=%s requires %s=%s",
+			option.DatapathMode, option.Config.DatapathMode, option.EnablePolicy, option.NeverEnforce))
+	}
+	if option.Config.TunnelingEnabled() {
+		logging.Fatal(logger, fmt.Sprintf("%s=%s requires native routing with tunneling disabled",
+			option.DatapathMode, option.Config.DatapathMode))
+	}
+}
+
 func initEnv(logger *slog.Logger, vp *viper.Viper) {
 	var debugDatapath bool
 
@@ -1049,6 +1097,7 @@ func initEnv(logger *slog.Logger, vp *viper.Viper) {
 	if !option.Config.EnableIPv4 && !option.Config.EnableIPv6 {
 		logging.Fatal(logger, "Either IPv4 or IPv6 addressing must be enabled")
 	}
+	validateNoBPFDatapathMode(logger)
 	if err := labelsfilter.ParseLabelPrefixCfg(logger, option.Config.Labels, option.Config.NodeLabels, option.Config.LabelPrefixFile); err != nil {
 		logging.Fatal(logger, "Unable to parse Label prefix configuration", logfields.Error, err)
 	}

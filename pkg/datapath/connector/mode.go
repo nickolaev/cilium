@@ -8,16 +8,17 @@ import dpoption "github.com/cilium/cilium/pkg/datapath/option"
 type Mode string
 
 const (
-	ModeUnspec   = Mode("")
-	ModeAuto     = Mode(dpoption.DatapathModeAuto)
-	ModeVeth     = Mode(dpoption.DatapathModeVeth)
-	ModeNetkit   = Mode(dpoption.DatapathModeNetkit)
-	ModeNetkitL2 = Mode(dpoption.DatapathModeNetkitL2)
+	ModeUnspec     = Mode("")
+	ModeAuto       = Mode(dpoption.DatapathModeAuto)
+	ModeVeth       = Mode(dpoption.DatapathModeVeth)
+	ModeLinuxRoute = Mode(dpoption.DatapathModeLinuxRoute)
+	ModeNetkit     = Mode(dpoption.DatapathModeNetkit)
+	ModeNetkitL2   = Mode(dpoption.DatapathModeNetkitL2)
 )
 
 func (mode Mode) IsLayer2() bool {
 	switch mode {
-	case ModeVeth, ModeNetkitL2:
+	case ModeVeth, ModeLinuxRoute, ModeNetkitL2:
 		return true
 	default:
 		return false
@@ -34,7 +35,7 @@ func (mode Mode) IsNetkit() bool {
 }
 
 func (mode Mode) IsVeth() bool {
-	return mode == ModeVeth
+	return mode == ModeVeth || mode == ModeLinuxRoute
 }
 
 func (mode Mode) String() string {
@@ -43,6 +44,8 @@ func (mode Mode) String() string {
 		return dpoption.DatapathModeAuto
 	case ModeVeth:
 		return dpoption.DatapathModeVeth
+	case ModeLinuxRoute:
+		return dpoption.DatapathModeLinuxRoute
 	case ModeNetkit:
 		return dpoption.DatapathModeNetkit
 	case ModeNetkitL2:
@@ -58,6 +61,8 @@ func ModeByName(mode string) Mode {
 		return ModeAuto
 	case dpoption.DatapathModeVeth:
 		return ModeVeth
+	case dpoption.DatapathModeLinuxRoute:
+		return ModeLinuxRoute
 	case dpoption.DatapathModeNetkit:
 		return ModeNetkit
 	case dpoption.DatapathModeNetkitL2:

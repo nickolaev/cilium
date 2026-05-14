@@ -33,6 +33,9 @@ const (
 	// DatapathModeVeth captures enum value "veth"
 	DatapathModeVeth DatapathMode = "veth"
 
+	// DatapathModeLinuxRoute captures enum value "linux-route"
+	DatapathModeLinuxRoute DatapathMode = "linux-route"
+
 	// DatapathModeNetkit captures enum value "netkit"
 	DatapathModeNetkit DatapathMode = "netkit"
 
@@ -45,7 +48,7 @@ var datapathModeEnum []any
 
 func init() {
 	var res []DatapathMode
-	if err := json.Unmarshal([]byte(`["veth","netkit","netkit-l2"]`), &res); err != nil {
+	if err := json.Unmarshal([]byte(`["veth","linux-route","netkit","netkit-l2"]`), &res); err != nil {
 		panic(err)
 	}
 	for _, v := range res {
