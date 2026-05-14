@@ -221,8 +221,9 @@ func convertService(cfg loadbalancer.Config, extCfg loadbalancer.ExternalConfig,
 	}
 
 	// NodePort
-	// Do not reflect if KubeProxyReplacement is disabled, as it has no use and can affect NodePort service reachability.
-	if extCfg.KubeProxyReplacement {
+	// Do not reflect if both eBPF KPR and the no-eBPF Service backend are
+	// disabled, as it has no use and can affect kube-proxy NodePort reachability.
+	if extCfg.KubeProxyReplacement || extCfg.EnableNoEBPFServices {
 		if (svc.Spec.Type == slim_corev1.ServiceTypeNodePort || svc.Spec.Type == slim_corev1.ServiceTypeLoadBalancer) &&
 			expType.CanExpose(slim_corev1.ServiceTypeNodePort) {
 

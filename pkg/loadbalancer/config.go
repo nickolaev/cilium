@@ -506,6 +506,7 @@ type ExternalConfig struct {
 
 	EnableIPv4, EnableIPv6                 bool
 	KubeProxyReplacement                   bool
+	EnableNoEBPFServices                   bool
 	NodePortMin, NodePortMax               uint16
 	NodePortAlg                            string
 	LoadBalancerAlgorithmAnnotation        bool
@@ -533,6 +534,7 @@ func NewExternalConfig(p externalConfigParams) ExternalConfig {
 		EnableIPv4:                             p.DaemonConfig.EnableIPv4,
 		EnableIPv6:                             p.DaemonConfig.EnableIPv6,
 		KubeProxyReplacement:                   p.KprConfig.KubeProxyReplacement,
+		EnableNoEBPFServices:                   p.DaemonConfig.EnableNoEBPFServices,
 		BPFSocketLBHostnsOnly:                  p.DaemonConfig.UnsafeDaemonConfigOption.BPFSocketLBHostnsOnly,
 		EnableSocketLB:                         p.KprConfig.EnableSocketLB,
 		EnableSocketLBPodConnectionTermination: p.DaemonConfig.UnsafeDaemonConfigOption.EnableSocketLBPodConnectionTermination,

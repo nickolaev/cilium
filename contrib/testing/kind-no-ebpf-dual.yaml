@@ -1,11 +1,12 @@
-# Experimental no-eBPF dual-stack values for the Phase 0 linux-route spike.
+# Experimental no-eBPF dual-stack values for the linux-route Service phase.
 #
 # Create the kind cluster with kube-proxy disabled, for example:
 #   KUBEPROXY_MODE=none IPFAMILY=dual ./contrib/scripts/kind.sh
 #
-# Until the nftables Service replacement exists, ClusterIP/NodePort traffic is
-# expected to fail in this profile. Phase 0 uses that failure as the baseline for
-# the nftables Service spike.
+# This profile is intentionally scoped to the Phase 2 Service MVP: kube-proxy is
+# disabled and ClusterIP/NodePort traffic is implemented by the no-eBPF nftables
+# backend. Standard NetworkPolicy is left disabled here so Phase 2 validation
+# does not accidentally depend on Phase 3 policy work.
 bpf:
   datapathMode: linux-route
   masquerade: false
@@ -34,13 +35,73 @@ noEBPF:
   services:
     enabled: true
   networkPolicy:
-    enabled: true
+    enabled: false
+
+# The experimental no-eBPF nftables backend shells out to nft(8). The CI image
+# used by kind-fast does not package nftables yet, so the kind profile exposes
+# the Debian node binary and its shared libraries from the host node.
+extraHostPathMounts:
+  - name: host-nft
+    mountPath: /usr/sbin/nft
+    hostPath: /usr/sbin/nft
+    hostPathType: File
+    readOnly: true
+  - name: host-libnftables
+    mountPath: /lib/x86_64-linux-gnu/libnftables.so.1
+    hostPath: /lib/x86_64-linux-gnu/libnftables.so.1
+    hostPathType: File
+    readOnly: true
+  - name: host-libmnl
+    mountPath: /lib/x86_64-linux-gnu/libmnl.so.0
+    hostPath: /lib/x86_64-linux-gnu/libmnl.so.0
+    hostPathType: File
+    readOnly: true
+  - name: host-libnftnl
+    mountPath: /lib/x86_64-linux-gnu/libnftnl.so.11
+    hostPath: /lib/x86_64-linux-gnu/libnftnl.so.11
+    hostPathType: File
+    readOnly: true
+  - name: host-libxtables
+    mountPath: /lib/x86_64-linux-gnu/libxtables.so.12
+    hostPath: /lib/x86_64-linux-gnu/libxtables.so.12
+    hostPathType: File
+    readOnly: true
+  - name: host-libjansson
+    mountPath: /lib/x86_64-linux-gnu/libjansson.so.4
+    hostPath: /lib/x86_64-linux-gnu/libjansson.so.4
+    hostPathType: File
+    readOnly: true
+  - name: host-libedit
+    mountPath: /lib/x86_64-linux-gnu/libedit.so.2
+    hostPath: /lib/x86_64-linux-gnu/libedit.so.2
+    hostPathType: File
+    readOnly: true
+  - name: host-libtinfo
+    mountPath: /lib/x86_64-linux-gnu/libtinfo.so.6
+    hostPath: /lib/x86_64-linux-gnu/libtinfo.so.6
+    hostPathType: File
+    readOnly: true
+  - name: host-libbsd
+    mountPath: /lib/x86_64-linux-gnu/libbsd.so.0
+    hostPath: /lib/x86_64-linux-gnu/libbsd.so.0
+    hostPathType: File
+    readOnly: true
+  - name: host-libmd
+    mountPath: /lib/x86_64-linux-gnu/libmd.so.0
+    hostPath: /lib/x86_64-linux-gnu/libmd.so.0
+    hostPathType: File
+    readOnly: true
+  - name: host-libgmp
+    mountPath: /lib/x86_64-linux-gnu/libgmp.so.10
+    hostPath: /lib/x86_64-linux-gnu/libgmp.so.10
+    hostPathType: File
+    readOnly: true
 
 # Masquerade/SNAT-sensitive cases are outside the M1 spike.
 enableIPv4Masquerade: false
 enableIPv6Masquerade: false
 
-# Explicit M1 cuts.
+# Explicit Phase 2 cuts.
 l7Proxy: false
 policyEnforcementMode: never
 hostFirewall:

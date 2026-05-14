@@ -25,7 +25,11 @@ type CommandRunner struct {
 func (r CommandRunner) Run(ctx context.Context, args []string, stdin string) ([]byte, error) {
 	path := r.Path
 	if path == "" {
-		path = "nft"
+		var err error
+		path, err = exec.LookPath("nft")
+		if err != nil {
+			return nil, fmt.Errorf("find nft binary for no-eBPF nftables backend: %w", err)
+		}
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	if stdin != "" {

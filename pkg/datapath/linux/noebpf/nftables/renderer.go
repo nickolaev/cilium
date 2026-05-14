@@ -37,6 +37,7 @@ type ServiceDNAT struct {
 	Protocol     Protocol
 	BackendAddr  netip.Addr
 	BackendPort  uint16
+	NodePort     bool
 }
 
 // PolicyAllow is a minimal allow tuple for the Phase 0 default-deny smoke.
@@ -85,14 +86,18 @@ func Render(state DesiredState) (string, error) {
 	b.WriteString("table inet " + TableName + " {\n")
 	b.WriteString("\tchain service_prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
-	for _, svc := range sortedServices(state.Services) {
-		b.WriteString("\t\t" + svc.dnatRule() + "\n")
+	for _, svc := range groupedServices(state.Services) {
+		for _, rule := range svc.dnatRules() {
+			b.WriteString("\t\t" + rule + "\n")
+		}
 	}
 	b.WriteString("\t}\n")
 	b.WriteString("\tchain service_output {\n")
 	b.WriteString("\t\ttype nat hook output priority -100; policy accept;\n")
-	for _, svc := range sortedServices(state.Services) {
-		b.WriteString("\t\t" + svc.dnatRule() + "\n")
+	for _, svc := range groupedServices(state.Services) {
+		for _, rule := range svc.dnatRules() {
+			b.WriteString("\t\t" + rule + "\n")
+		}
 	}
 	b.WriteString("\t}\n")
 	b.WriteString("\tchain policy_forward {\n")
@@ -157,14 +162,63 @@ func validateProtocol(proto Protocol) error {
 	}
 }
 
-func (s ServiceDNAT) dnatRule() string {
-	family := addrFamily(s.FrontendAddr)
-	backend := s.BackendAddr.String()
-	if s.BackendAddr.Is6() {
+type serviceKey struct {
+	addr     netip.Addr
+	port     uint16
+	protocol Protocol
+	nodePort bool
+}
+
+type serviceGroup struct {
+	serviceKey
+	backends []serviceBackend
+}
+
+type serviceBackend struct {
+	addr netip.Addr
+	port uint16
+}
+
+func (s ServiceDNAT) serviceKey() serviceKey {
+	return serviceKey{
+		addr:     s.FrontendAddr,
+		port:     s.FrontendPort,
+		protocol: s.Protocol,
+		nodePort: s.NodePort,
+	}
+}
+
+func (s serviceGroup) dnatRules() []string {
+	rules := make([]string, 0, len(s.backends))
+	for i, backend := range s.backends {
+		rule := s.match()
+		if i < len(s.backends)-1 {
+			rule += fmt.Sprintf(" numgen random mod %d == %d", len(s.backends), i)
+		}
+		rule += " dnat to " + formatBackend(backend.addr, backend.port)
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
+func (s serviceGroup) match() string {
+	family := addrFamily(s.addr)
+	if s.nodePort && s.addr.IsUnspecified() {
+		nfproto := "ipv6"
+		if s.addr.Is4() {
+			nfproto = "ipv4"
+		}
+		return fmt.Sprintf("meta nfproto %s %s dport %d", nfproto, s.protocol, s.port)
+	}
+	return fmt.Sprintf("%s daddr %s %s dport %d", family, s.addr, s.protocol, s.port)
+}
+
+func formatBackend(addr netip.Addr, port uint16) string {
+	backend := addr.String()
+	if addr.Is6() {
 		backend = "[" + backend + "]"
 	}
-	return fmt.Sprintf("%s daddr %s %s dport %d dnat to %s:%d",
-		family, s.FrontendAddr, s.Protocol, s.FrontendPort, backend, s.BackendPort)
+	return fmt.Sprintf("%s:%d", backend, port)
 }
 
 func (a PolicyAllow) ingressRule() string {
@@ -199,9 +253,34 @@ func prefixFamily(prefix netip.Prefix) string {
 	return "ip6"
 }
 
-func sortedServices(in []ServiceDNAT) []ServiceDNAT {
-	out := append([]ServiceDNAT(nil), in...)
-	sort.Slice(out, func(i, j int) bool { return out[i].dnatRule() < out[j].dnatRule() })
+func groupedServices(in []ServiceDNAT) []serviceGroup {
+	byKey := map[serviceKey][]serviceBackend{}
+	for _, svc := range in {
+		key := svc.serviceKey()
+		byKey[key] = append(byKey[key], serviceBackend{addr: svc.BackendAddr, port: svc.BackendPort})
+	}
+	out := make([]serviceGroup, 0, len(byKey))
+	for key, backends := range byKey {
+		sort.Slice(backends, func(i, j int) bool {
+			if backends[i].addr == backends[j].addr {
+				return backends[i].port < backends[j].port
+			}
+			return backends[i].addr.Less(backends[j].addr)
+		})
+		out = append(out, serviceGroup{serviceKey: key, backends: backends})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].addr == out[j].addr {
+			if out[i].port == out[j].port {
+				if out[i].protocol == out[j].protocol {
+					return !out[i].nodePort && out[j].nodePort
+				}
+				return out[i].protocol < out[j].protocol
+			}
+			return out[i].port < out[j].port
+		}
+		return out[i].addr.Less(out[j].addr)
+	})
 	return out
 }
 

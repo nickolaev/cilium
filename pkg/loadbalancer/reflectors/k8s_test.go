@@ -68,3 +68,38 @@ func BenchmarkConvertEndpoints(b *testing.B) {
 	}
 	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "endpoints/sec")
 }
+
+func TestConvertServiceReflectsNodePortForNoEBPFServices(t *testing.T) {
+	svc := &slim_corev1.Service{
+		Spec: slim_corev1.ServiceSpec{
+			Type:       slim_corev1.ServiceTypeNodePort,
+			ClusterIPs: []string{"10.96.0.10", "fd00:10:96::a"},
+			IPFamilies: []slim_corev1.IPFamily{
+				slim_corev1.IPv4Protocol,
+				slim_corev1.IPv6Protocol,
+			},
+			Ports: []slim_corev1.ServicePort{{
+				Name:     "http",
+				Protocol: slim_corev1.ProtocolTCP,
+				Port:     80,
+				NodePort: 30080,
+			}},
+		},
+	}
+
+	_, frontends := convertService(loadbalancer.DefaultConfig, loadbalancer.ExternalConfig{
+		EnableIPv4:           true,
+		EnableIPv6:           true,
+		EnableNoEBPFServices: true,
+	}, slog.New(slog.DiscardHandler), nil, svc, source.Kubernetes)
+
+	var nodePorts int
+	for _, frontend := range frontends {
+		if frontend.Type == loadbalancer.SVCTypeNodePort {
+			nodePorts++
+		}
+	}
+	if nodePorts != 2 {
+		t.Fatalf("expected IPv4 and IPv6 NodePort frontends, got %d in %#v", nodePorts, frontends)
+	}
+}

@@ -39,6 +39,7 @@ func ServicesFromFrontends(frontends []*loadbalancer.Frontend) ([]ServiceDNAT, e
 				Protocol:     proto,
 				BackendAddr:  be.Address.Addr(),
 				BackendPort:  backendPort(fe, be.Address),
+				NodePort:     fe.Type == loadbalancer.SVCTypeNodePort,
 			})
 		}
 	}

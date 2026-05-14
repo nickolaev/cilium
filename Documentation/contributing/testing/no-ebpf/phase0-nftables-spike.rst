@@ -74,3 +74,38 @@ NetworkPolicy integration until all of these are demonstrated in kind:
 
 If any criterion fails, pause and choose a new backend direction explicitly
 instead of adding an implicit iptables/IPVS fallback.
+
+Phase 2 Service smoke
+---------------------
+
+The Phase 2 Service MVP keeps kube-proxy disabled and uses the owned
+``inet cilium_noebpf`` table for the core Service paths only. The accepted
+scope is deliberately small: dual-stack ClusterIP and basic wildcard NodePort
+for TCP/UDP with active EndpointSlice backends. LoadBalancer, ExternalIPs,
+traffic policies, topology hints, session affinity, health checks, source
+ranges, and SCTP remain outside this phase.
+
+After installing the dual-stack no-eBPF profile, verify the agent reports
+``Device Mode: linux-route`` and that kube-proxy is not providing Service
+translation for the test. Then inspect the rendered table:
+
+.. code-block:: shell-session
+
+   $ kubectl -n kube-system exec ds/cilium -- cilium-dbg status --verbose \
+       | grep -E 'Device Mode|KubeProxyReplacement|Socket LB'
+   $ kubectl -n kube-system exec ds/cilium -- nft list table inet cilium_noebpf
+
+Minimum Service checks:
+
+#. pod-to-ClusterIP over IPv4 and IPv6;
+#. node-to-ClusterIP over IPv4 and IPv6;
+#. pod-to-NodePort over IPv4 and IPv6;
+#. node-to-NodePort over IPv4 and IPv6;
+#. CoreDNS Service lookup over UDP;
+#. scaling a backend down removes the stale DNAT target after reconciliation;
+#. deleting a Service removes its nftables rules after reconciliation;
+#. restarting ``cilium-agent`` recreates only the current desired Service rules.
+
+Wildcard NodePort frontends are rendered as protocol/port matches in the owned
+nat hooks. This is acceptable for the product-demo spike but must be narrowed to
+node-address matches before the support matrix is expanded beyond Phase 2.
