@@ -60,9 +60,12 @@ func TestApplyDeletesExistingTableFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := callArgs(runner.calls)
-	want := [][]string{{"list", "table", "inet", "cilium_noebpf"}, {"delete", "table", "inet", "cilium_noebpf"}, {"-f", "-"}}
+	want := [][]string{{"list", "table", "inet", "cilium_noebpf"}, {"-f", "-"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected calls: got %#v want %#v", got, want)
+	}
+	if !strings.HasPrefix(runner.calls[1].stdin, "delete table inet cilium_noebpf\n") {
+		t.Fatalf("existing-table replacement must be one nft transaction, got:\n%s", runner.calls[1].stdin)
 	}
 }
 

@@ -95,10 +95,14 @@ YAML
 "${kubectl_cmd[@]}" -n "${namespace}" rollout status deploy/echo --timeout=180s
 "${kubectl_cmd[@]}" -n "${namespace}" wait --for=condition=Ready pod/client --timeout=180s
 
-svc4="$("${kubectl_cmd[@]}" -n "${namespace}" get svc echo -o jsonpath='{.spec.clusterIPs[0]}')"
-svc6="$("${kubectl_cmd[@]}" -n "${namespace}" get svc echo -o jsonpath='{.spec.clusterIPs[1]}')"
+svc4="$("${kubectl_cmd[@]}" -n "${namespace}" get svc echo -o jsonpath='{range .spec.clusterIPs[*]}{@}{"\n"}{end}' | grep -E '^[0-9.]+$' | head -n1)"
+svc6="$("${kubectl_cmd[@]}" -n "${namespace}" get svc echo -o jsonpath='{range .spec.clusterIPs[*]}{@}{"\n"}{end}' | grep -E ':' | head -n1)"
 node4="$("${kubectl_cmd[@]}" get node "${worker_node}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' | awk '{print $1}')"
 node6="$(docker inspect "${worker_node}" --format '{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}')"
+if [[ -z "${svc4}" || -z "${svc6}" ]]; then
+  echo "expected dual-stack ClusterIPs for ${namespace}/echo, got v4=${svc4:-<none>} v6=${svc6:-<none>}" >&2
+  exit 1
+fi
 
 pod_connect() {
   local proto="$1" target="$2"
@@ -121,10 +125,15 @@ docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http:
 docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://${node4}:30080/hostname" >/dev/null
 docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://[${node6}]:30080/hostname" >/dev/null
 
-kube_dns_ip="$("${kubectl_cmd[@]}" -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIPs[0]}' 2>/dev/null || true)"
-if [[ -n "${kube_dns_ip}" ]]; then
-  echo "CoreDNS Service UDP check ${kube_dns_ip}:53"
-  "${kubectl_cmd[@]}" -n "${namespace}" exec client -- dig +short +time=2 +tries=1 "@${kube_dns_ip}" kubernetes.default.svc.cluster.local A >/dev/null
+kube_dns4="$("${kubectl_cmd[@]}" -n kube-system get svc kube-dns -o jsonpath='{range .spec.clusterIPs[*]}{@}{"\n"}{end}' 2>/dev/null | grep -E '^[0-9.]+$' | head -n1 || true)"
+kube_dns6="$("${kubectl_cmd[@]}" -n kube-system get svc kube-dns -o jsonpath='{range .spec.clusterIPs[*]}{@}{"\n"}{end}' 2>/dev/null | grep -E ':' | head -n1 || true)"
+if [[ -n "${kube_dns4}" ]]; then
+  echo "CoreDNS Service UDP IPv4 check ${kube_dns4}:53"
+  "${kubectl_cmd[@]}" -n "${namespace}" exec client -- dig +short +time=2 +tries=1 "@${kube_dns4}" kubernetes.default.svc.cluster.local A >/dev/null
+fi
+if [[ -n "${kube_dns6}" ]]; then
+  echo "CoreDNS Service UDP IPv6 check ${kube_dns6}:53"
+  "${kubectl_cmd[@]}" -n "${namespace}" exec client -- dig +short +time=2 +tries=1 "@${kube_dns6}" kubernetes.default.svc.cluster.local AAAA >/dev/null
 fi
 
 echo "scale-down reconciliation check"

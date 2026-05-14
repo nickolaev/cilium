@@ -52,9 +52,7 @@ func Apply(ctx context.Context, runner Runner, state DesiredState) error {
 	}
 
 	if out, err := runner.Run(ctx, []string{"list", "table", "inet", TableName}, ""); err == nil {
-		if out, err := runner.Run(ctx, []string{"delete", "table", "inet", TableName}, ""); err != nil {
-			return fmt.Errorf("delete existing nftables table %s: %w: %s", TableName, err, bytes.TrimSpace(out))
-		}
+		script = fmt.Sprintf("delete table inet %s\n%s", TableName, script)
 	} else if !isMissingTableError(out) {
 		return fmt.Errorf("inspect nftables table %s: %w: %s", TableName, err, bytes.TrimSpace(out))
 	}

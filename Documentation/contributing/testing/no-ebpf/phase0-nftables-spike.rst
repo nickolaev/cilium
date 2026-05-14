@@ -109,3 +109,9 @@ Minimum Service checks:
 Wildcard NodePort frontends are rendered as protocol/port matches in the owned
 nat hooks. This is acceptable for the product-demo spike but must be narrowed to
 node-address matches before the support matrix is expanded beyond Phase 2.
+
+Phase 4 local CI
+----------------
+
+For the current end-to-end local validation workflow, support matrix, and
+targeted connectivity commands, see ``quickstart.rst`` in this directory.

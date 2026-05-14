@@ -1,4 +1,6 @@
 *
 !/specs/
 !/specs/*.md
+!/reviews/
+!/reviews/*.md
 !/.gitignore

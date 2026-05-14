@@ -98,6 +98,26 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
+  name: blocked
+  namespace: ${peer_namespace}
+  labels:
+    app: blocked
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: ${client_node}
+  containers:
+  - name: blocked
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53
+    args: ["netexec", "--http-port=8080", "--udp-port=8081"]
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+    - containerPort: 8081
+      protocol: UDP
+---
+apiVersion: v1
+kind: Pod
+metadata:
   name: egress
   namespace: ${namespace}
   labels:
@@ -112,29 +132,35 @@ spec:
 YAML
 
 "${kubectl_cmd[@]}" -n "${namespace}" wait --for=condition=Ready pod/server pod/egress --timeout=180s
-"${kubectl_cmd[@]}" -n "${peer_namespace}" wait --for=condition=Ready pod/allowed pod/denied --timeout=180s
+"${kubectl_cmd[@]}" -n "${peer_namespace}" wait --for=condition=Ready pod/allowed pod/denied pod/blocked --timeout=180s
 
 server4="$("${kubectl_cmd[@]}" -n "${namespace}" get pod server -o jsonpath='{range .status.podIPs[*]}{.ip}{"\n"}{end}' | grep -E '^[0-9.]+$' | head -n1)"
-if [[ -z "${server4}" ]]; then
-  echo "could not determine IPv4 PodIP for ${namespace}/server" >&2
+server6="$("${kubectl_cmd[@]}" -n "${namespace}" get pod server -o jsonpath='{range .status.podIPs[*]}{.ip}{"\n"}{end}' | grep -E ':' | head -n1)"
+blocked4="$("${kubectl_cmd[@]}" -n "${peer_namespace}" get pod blocked -o jsonpath='{range .status.podIPs[*]}{.ip}{"\n"}{end}' | grep -E '^[0-9.]+$' | head -n1)"
+blocked6="$("${kubectl_cmd[@]}" -n "${peer_namespace}" get pod blocked -o jsonpath='{range .status.podIPs[*]}{.ip}{"\n"}{end}' | grep -E ':' | head -n1)"
+if [[ -z "${server4}" || -z "${server6}" || -z "${blocked4}" || -z "${blocked6}" ]]; then
+  echo "could not determine dual-stack PodIPs, server v4=${server4:-<none>} v6=${server6:-<none>} blocked v4=${blocked4:-<none>} v6=${blocked6:-<none>}" >&2
   exit 1
 fi
 
 connect() {
-  local ns="$1" pod="$2" target="$3"
-  "${kubectl_cmd[@]}" -n "${ns}" exec "${pod}" -- /agnhost connect --timeout=5s --protocol=tcp "${target}"
+  local proto="$1" ns="$2" pod="$3" target="$4"
+  "${kubectl_cmd[@]}" -n "${ns}" exec "${pod}" -- /agnhost connect --timeout=5s --protocol="${proto}" "${target}"
 }
 
 expect_fail() {
-  local ns="$1" pod="$2" target="$3"
-  if connect "${ns}" "${pod}" "${target}" >/dev/null 2>&1; then
-    echo "expected ${ns}/${pod} -> ${target} to fail" >&2
+  local proto="$1" ns="$2" pod="$3" target="$4"
+  if connect "${proto}" "${ns}" "${pod}" "${target}" >/dev/null 2>&1; then
+    echo "expected ${proto} ${ns}/${pod} -> ${target} to fail" >&2
     return 1
   fi
 }
 
 echo "baseline pod-to-pod allow"
-connect "${peer_namespace}" allowed "${server4}:8080" >/dev/null
+connect tcp "${peer_namespace}" allowed "${server4}:8080" >/dev/null
+connect tcp "${peer_namespace}" allowed "[${server6}]:8080" >/dev/null
+connect udp "${peer_namespace}" allowed "${server4}:8081" >/dev/null
+connect udp "${peer_namespace}" allowed "[${server6}]:8081" >/dev/null
 
 cat <<YAML | "${kubectl_cmd[@]}" apply -f -
 apiVersion: networking.k8s.io/v1
@@ -161,13 +187,20 @@ spec:
     ports:
     - protocol: TCP
       port: 8080
+    - protocol: UDP
+      port: 8081
 YAML
 sleep 5
 
 echo "ingress allow/deny"
-connect "${peer_namespace}" allowed "${server4}:8080" >/dev/null
-expect_fail "${peer_namespace}" denied "${server4}:8080"
-expect_fail "${peer_namespace}" allowed "${server4}:8081"
+connect tcp "${peer_namespace}" allowed "${server4}:8080" >/dev/null
+connect tcp "${peer_namespace}" allowed "[${server6}]:8080" >/dev/null
+connect udp "${peer_namespace}" allowed "${server4}:8081" >/dev/null
+connect udp "${peer_namespace}" allowed "[${server6}]:8081" >/dev/null
+expect_fail tcp "${peer_namespace}" denied "${server4}:8080"
+expect_fail tcp "${peer_namespace}" denied "[${server6}]:8080"
+expect_fail udp "${peer_namespace}" denied "${server4}:8081"
+expect_fail udp "${peer_namespace}" denied "[${server6}]:8081"
 
 cat <<YAML | "${kubectl_cmd[@]}" apply -f -
 apiVersion: networking.k8s.io/v1
@@ -184,15 +217,25 @@ spec:
   - to:
     - ipBlock:
         cidr: ${server4}/32
+    - ipBlock:
+        cidr: ${server6}/128
     ports:
     - protocol: TCP
       port: 8080
+    - protocol: UDP
+      port: 8081
 YAML
 sleep 5
 
 echo "egress ipBlock allow/deny"
-connect "${namespace}" egress "${server4}:8080" >/dev/null
-expect_fail "${namespace}" egress "${server4}:8081"
+connect tcp "${namespace}" egress "${server4}:8080" >/dev/null
+connect tcp "${namespace}" egress "[${server6}]:8080" >/dev/null
+connect udp "${namespace}" egress "${server4}:8081" >/dev/null
+connect udp "${namespace}" egress "[${server6}]:8081" >/dev/null
+expect_fail tcp "${namespace}" egress "${blocked4}:8080"
+expect_fail tcp "${namespace}" egress "[${blocked6}]:8080"
+expect_fail udp "${namespace}" egress "${blocked4}:8081"
+expect_fail udp "${namespace}" egress "[${blocked6}]:8081"
 
 agent_node="${server_node}"
 table="$(docker exec "${agent_node}" nft list table inet cilium_noebpf)"
@@ -201,9 +244,15 @@ if ! grep -q "ip daddr ${server4} tcp dport 8080 accept" <<<"${table}"; then
   docker exec "${agent_node}" nft list table inet cilium_noebpf >&2 || true
   exit 1
 fi
+if ! grep -q "ip6 daddr ${server6} udp dport 8081 accept" <<<"${table}"; then
+  echo "expected nft policy allow for ${server6} udp dport 8081" >&2
+  docker exec "${agent_node}" nft list table inet cilium_noebpf >&2 || true
+  exit 1
+fi
 
 "${kubectl_cmd[@]}" -n "${namespace}" delete netpol server-ingress egress-ipblock >/dev/null
 sleep 5
-connect "${peer_namespace}" denied "${server4}:8080" >/dev/null
+connect tcp "${peer_namespace}" denied "${server4}:8080" >/dev/null
+connect tcp "${peer_namespace}" denied "[${server6}]:8080" >/dev/null
 
 echo "Phase 3 no-eBPF NetworkPolicy smoke passed for ${context}"

@@ -18,8 +18,6 @@ import (
 	k8sTables "github.com/cilium/cilium/pkg/k8s/tables"
 	"github.com/cilium/cilium/pkg/loadbalancer"
 	"github.com/cilium/cilium/pkg/option"
-	"github.com/cilium/cilium/pkg/rate"
-	"github.com/cilium/cilium/pkg/time"
 )
 
 // Cell wires the experimental no-eBPF nftables reconciler into the agent. It is
@@ -80,19 +78,11 @@ type controller struct {
 }
 
 func (c *controller) run(ctx context.Context, health cell.Health) error {
-	initialized, watch := c.frontends.Initialized(c.db.ReadTxn())
-	for !initialized {
-		health.OK("Waiting for load-balancer frontends to initialize")
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-watch:
-			initialized = true
+	if option.Config.EnableNoEBPFServices {
+		if err := c.waitTableInitialized(ctx, health, c.frontends, "load-balancer frontends"); err != nil {
+			return err
 		}
 	}
-
-	limiter := rate.NewLimiter(time.Second, 1)
-	defer limiter.Stop()
 
 	var policyEvents <-chan resource.Event[*networkingv1.NetworkPolicy]
 	if option.Config.EnableNoEBPFNetworkPolicy && c.networkPolicies != nil {
@@ -101,6 +91,11 @@ func (c *controller) run(ctx context.Context, health cell.Health) error {
 	var podEvents <-chan resource.Event[*corev1.Pod]
 	if option.Config.EnableNoEBPFNetworkPolicy && c.allPods != nil {
 		podEvents = c.allPods.Events(ctx)
+	}
+	if option.Config.EnableNoEBPFNetworkPolicy {
+		if err := c.waitPolicyInputsInitialized(ctx, health, policyEvents, podEvents); err != nil {
+			return err
+		}
 	}
 
 	for {
@@ -131,10 +126,60 @@ func (c *controller) run(ctx context.Context, health cell.Health) error {
 			}
 			c.handlePolicyEvent(ev)
 		}
-		if err := limiter.Wait(ctx); err != nil {
-			return err
+	}
+}
+
+func (c *controller) waitTableInitialized(ctx context.Context, health cell.Health, table statedb.TableMeta, name string) error {
+	initialized, watch := table.Initialized(c.db.ReadTxn())
+	for !initialized {
+		health.OK("Waiting for no-eBPF nftables " + name + " to initialize")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-watch:
+			initialized, watch = table.Initialized(c.db.ReadTxn())
 		}
 	}
+	return nil
+}
+
+func (c *controller) waitPolicyInputsInitialized(ctx context.Context, health cell.Health, policyEvents <-chan resource.Event[*networkingv1.NetworkPolicy], podEvents <-chan resource.Event[*corev1.Pod]) error {
+	if c.pods == nil || c.namespaces == nil || c.networkPolicies == nil || c.allPods == nil {
+		return fmt.Errorf("no-eBPF NetworkPolicy backend requires local pods, namespaces, all pods, and NetworkPolicy resources")
+	}
+	if err := c.waitTableInitialized(ctx, health, c.pods, "local pods"); err != nil {
+		return err
+	}
+	if err := c.waitTableInitialized(ctx, health, c.namespaces, "namespaces"); err != nil {
+		return err
+	}
+
+	policiesSynced := false
+	podsSynced := false
+	for !policiesSynced || !podsSynced {
+		health.OK("Waiting for no-eBPF nftables Kubernetes policy resources to synchronize")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ev, ok := <-policyEvents:
+			if !ok {
+				return fmt.Errorf("NetworkPolicy resource closed before synchronization")
+			}
+			if ev.Kind == resource.Sync {
+				policiesSynced = true
+			}
+			c.handlePolicyEvent(ev)
+		case ev, ok := <-podEvents:
+			if !ok {
+				return fmt.Errorf("Pod resource closed before synchronization")
+			}
+			if ev.Kind == resource.Sync {
+				podsSynced = true
+			}
+			c.handlePodEvent(ev)
+		}
+	}
+	return nil
 }
 
 type tableWatches struct {

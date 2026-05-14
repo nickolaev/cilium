@@ -389,6 +389,7 @@ func (d *statusCollector) getKubeProxyReplacementStatus(ctx context.Context) *mo
 		features.Annotations = append(features.Annotations, annotation.ServiceSourceRangesPolicy)
 		sort.Strings(features.Annotations)
 	}
+	features.Annotations = append(features.Annotations, d.getNoEBPFAnnotations()...)
 
 	var directRoutingDevice string
 	drd, _ := d.statusParams.DirectRoutingDev.Get(ctx, d.statusParams.DB.ReadTxn())
@@ -403,6 +404,28 @@ func (d *statusCollector) getKubeProxyReplacementStatus(ctx context.Context) *mo
 		DirectRoutingDevice: directRoutingDevice,
 		Features:            features,
 	}
+}
+
+func (d *statusCollector) getNoEBPFAnnotations() []string {
+	if !datapathOption.IsNoBPFDatapathMode(d.statusParams.DaemonConfig.DatapathMode) &&
+		!d.statusParams.DaemonConfig.EnableNoEBPFServices &&
+		!d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy {
+		return nil
+	}
+
+	annotations := []string{"No-eBPF datapath: linux-route (experimental)"}
+	if d.statusParams.DaemonConfig.EnableNoEBPFServices {
+		annotations = append(annotations, "No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort TCP/UDP M1 subset)")
+	} else {
+		annotations = append(annotations, "No-eBPF Service replacement: disabled")
+	}
+	if d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy {
+		annotations = append(annotations, "No-eBPF Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors and TCP/UDP ports M1 subset)")
+	} else {
+		annotations = append(annotations, "No-eBPF Kubernetes NetworkPolicy: disabled")
+	}
+	annotations = append(annotations, "No-eBPF unsupported in M1: LoadBalancer, ExternalIPs, session affinity, traffic policies, L7/FQDN/CiliumNetworkPolicy, host firewall, BPF masquerade")
+	return annotations
 }
 
 func (d *statusCollector) getBPFMapStatus() *models.BPFMapStatus {

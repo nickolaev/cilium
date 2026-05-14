@@ -293,7 +293,16 @@ func sortedPolicies(in []EndpointPolicy) []EndpointPolicy {
 func sortedAllows(in []PolicyAllow) []PolicyAllow {
 	out := append([]PolicyAllow(nil), in...)
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].Source.String()+out[i].Destination.String() < out[j].Source.String()+out[j].Destination.String()
+		if out[i].Source.String() != out[j].Source.String() {
+			return out[i].Source.String() < out[j].Source.String()
+		}
+		if out[i].Destination.String() != out[j].Destination.String() {
+			return out[i].Destination.String() < out[j].Destination.String()
+		}
+		if out[i].Protocol != out[j].Protocol {
+			return out[i].Protocol < out[j].Protocol
+		}
+		return out[i].Port < out[j].Port
 	})
 	return out
 }

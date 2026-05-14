@@ -4551,6 +4551,27 @@
       },
       "type": "object"
     },
+    "noEBPF": {
+      "properties": {
+        "networkPolicy": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "services": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "ipv6NativeRoutingCIDR": {
       "type": "string"
     },

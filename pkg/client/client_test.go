@@ -105,6 +105,22 @@ func TestFormStatusResponse(t *testing.T) {
 			sd:       StatusDetails{},
 			expected: "KubeProxyReplacement:\t\t\nNodeMonitor:\tDisabled\nMasquerading:\tBPF\t[]\t10.0.0.0/16 fd00::/10 [IPv4: Enabled, IPv6: Enabled]\nProxy Status:\tNo managed proxy redirect\nGlobal Identity Range:\tUnknown\n",
 		},
+		{
+			name: "no eBPF feature annotations",
+			sr: &models.StatusResponse{
+				KubeProxyReplacement: &models.KubeProxyReplacement{
+					Features: &models.KubeProxyReplacementFeatures{
+						Annotations: []string{
+							"No-eBPF datapath: linux-route (experimental)",
+							"No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort TCP/UDP M1 subset)",
+							"io.cilium/lb-algorithm",
+						},
+					},
+				},
+			},
+			sd:       StatusDetails{},
+			expected: "KubeProxyReplacement:\t\t\nNo-eBPF:\tdatapath: linux-route (experimental); Service replacement: nftables enabled (ClusterIP/NodePort TCP/UDP M1 subset)\n",
+		},
 	}
 	for _, tc := range testCases {
 		var b bytes.Buffer

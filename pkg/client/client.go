@@ -357,6 +357,9 @@ func FormatStatusResponse(w io.Writer, sr *models.StatusResponse, sd StatusDetai
 		}
 		fmt.Fprintf(w, "KubeProxyReplacement:\t%s\t%s\n",
 			sr.KubeProxyReplacement.Mode, devices)
+		if annotations := noEBPFStatusAnnotations(sr.KubeProxyReplacement.Features); len(annotations) > 0 {
+			fmt.Fprintf(w, "No-eBPF:\t%s\n", strings.Join(annotations, "; "))
+		}
 	}
 	if sr.HostFirewall != nil {
 		fmt.Fprintf(w, "Host firewall:\t%s", sr.HostFirewall.Mode)
@@ -843,6 +846,20 @@ func FormatStatusResponse(w io.Writer, sr *models.StatusResponse, sd StatusDetai
 
 		fmt.Fprintf(w, "Encryption:\t%s\t%s\n", sr.Encryption.Mode, strings.Join(fields, ", "))
 	}
+}
+
+func noEBPFStatusAnnotations(features *models.KubeProxyReplacementFeatures) []string {
+	if features == nil {
+		return nil
+	}
+
+	annotations := []string{}
+	for _, annotation := range features.Annotations {
+		if summary, ok := strings.CutPrefix(annotation, "No-eBPF "); ok {
+			annotations = append(annotations, summary)
+		}
+	}
+	return annotations
 }
 
 // RemoteClustersStatusVerbosity specifies the verbosity when formatting the remote clusters status information.
