@@ -554,6 +554,68 @@ func TestPoliciesFromCiliumNetworkPoliciesMatchExpressionsNotIn(t *testing.T) {
 	require.Contains(t, script, "10.244.5.30/32 ip daddr 10.244.5.10/32 tcp dport 8080 counter accept")
 }
 
+func TestPoliciesFromCiliumNetworkPoliciesMatchExpressionsExistsAndDoesNotExist(t *testing.T) {
+	server := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.7.10"}}},
+	}
+	existsClient := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client-a", Namespace: "backend", Labels: map[string]string{"app": "client", "team": "blue"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.7.20"}}},
+	}
+	doesNotExistClient := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client-b", Namespace: "backend", Labels: map[string]string{"app": "client", "debug": "true"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.7.30"}}},
+	}
+
+	cnp := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "exists-does-not-exist", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}},
+			Ingress: []policyapi.IngressRule{
+				{
+					IngressCommonRule: policyapi.IngressCommonRule{
+						FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "client"},
+							MatchExpressions: []slimmetav1.LabelSelectorRequirement{{
+								Key:      "team",
+								Operator: slimmetav1.LabelSelectorOpExists,
+							}},
+						}}},
+					},
+					ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+				},
+				{
+					IngressCommonRule: policyapi.IngressCommonRule{
+						FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "client"},
+							MatchExpressions: []slimmetav1.LabelSelectorRequirement{{
+								Key:      "debug",
+								Operator: slimmetav1.LabelSelectorOpDoesNotExist,
+							}},
+						}}},
+					},
+					ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+				},
+			},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: server}},
+		[]*corev1.Pod{server, existsClient, doesNotExistClient},
+		[]k8sTables.Namespace{{Name: "backend"}},
+		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "ip saddr 10.244.7.20/32 ip daddr 10.244.7.10/32 tcp dport 8080 counter accept")
+	require.NotContains(t, script, "ip saddr 10.244.7.30/32 ip daddr 10.244.7.10/32 tcp dport 8080 counter accept")
+}
+
 func TestControllerCNPReconciliationOnDelete(t *testing.T) {
 	c := &controller{
 		cnpCache: map[resource.Key]*ciliumv2.CiliumNetworkPolicy{},
