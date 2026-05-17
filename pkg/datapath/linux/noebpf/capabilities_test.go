@@ -11,16 +11,20 @@ func TestCurrentCapabilities(t *testing.T) {
 		t.Fatalf("expected a fine-grained capability matrix, got %d entries", len(got))
 	}
 	mustHave := map[string]SupportLevel{
-		"Pod networking":                        SupportLevelSupported,
-		"Endpoint routes":                       SupportLevelSupported,
-		"ClusterIP Services":                    SupportLevelSupportedSubset,
-		"LoadBalancer Services":                 SupportLevelSupportedSubset,
-		"CoreDNS Service":                       SupportLevelSupported,
-		"LocalRedirectPolicy":                   SupportLevelSupportedSubset,
-		"Kubernetes NetworkPolicy":              SupportLevelSupportedSubset,
-		"NetworkPolicy named ports and endPort": SupportLevelSupportedSubset,
+		"Pod networking":                                       SupportLevelSupported,
+		"Endpoint routes":                                      SupportLevelSupported,
+		"ClusterIP Services":                                   SupportLevelSupportedSubset,
+		"LoadBalancer Services":                                SupportLevelSupportedSubset,
+		"CoreDNS Service":                                      SupportLevelSupported,
+		"LocalRedirectPolicy":                                  SupportLevelSupportedSubset,
+		"Kubernetes NetworkPolicy":                             SupportLevelSupportedSubset,
+		"NetworkPolicy named ports and endPort":                SupportLevelSupportedSubset,
+		"ICMP policy":                                          SupportLevelUnsupported,
+		"Service-based policy targets":                         SupportLevelUnsupported,
+		"Proxy-dependent authentication":                       SupportLevelUnsupported,
 		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy": SupportLevelSupportedSubset,
 		"Cilium deny policies":                                 SupportLevelSupportedSubset,
+		"Node selectors":                                       SupportLevelUnsupported,
 		"Hubble datapath flow events":                          SupportLevelUnsupported,
 	}
 	for name, want := range mustHave {

@@ -39,10 +39,12 @@ their current status in the no-eBPF / linux-route branch.
    * - ``CiliumNetworkPolicy``
      - Namespace-scoped Cilium CRD
      - Partial
-     - L3 / L4 allow rules, selector matching, namespace labels, named ports,
-       ``endPort``, and ``ipBlock`` / ``except`` are supported. Rich Cilium
-       identity-aware semantics, L7 rules, DNS rules, and Cilium-only selectors
-       remain out of scope.
+     - L3 / L4 allow and deny rules, selector matching, namespace labels,
+       named ports, ``endPort``, and ``ipBlock`` / ``except`` are supported.
+       Deny rules are rendered before allow rules so they win on overlap.
+       Rich Cilium identity-aware semantics, L7 rules, DNS rules, ICMP rules,
+       service selectors, authentication, node selectors, and Cilium-only
+       entity/group features remain out of scope.
    * - ``CiliumClusterwideNetworkPolicy``
      - Cluster-scoped Cilium CRD
      - Partial
@@ -51,8 +53,9 @@ their current status in the no-eBPF / linux-route branch.
    * - Deny policies
      - Explicit deny rules that override allow rules
      - Partial
-     - L3 / L4 ingressDeny / egressDeny rules are supported and evaluated
-       before allow rules.
+     - L3 / L4 ``ingressDeny`` / ``egressDeny`` rules are supported and
+       evaluated before allow rules. Policy overlap across KNP, CNP, and CCNP
+       is handled by the nftables renderer ordering.
    * - Host policies
      - ``CiliumClusterwideNetworkPolicy`` with ``NodeSelector``
      - No
@@ -71,6 +74,22 @@ their current status in the no-eBPF / linux-route branch.
      - Local redirect / pseudo-service behavior
      - Yes
      - Implemented in the current no-eBPF backend.
+
+Current no-eBPF policy gaps
+---------------------------
+
+The following policy features are still not implemented in the no-eBPF
+backend:
+
+* Host policies and node-level enforcement.
+* L7 policy, including HTTP, Kafka, TLS, and other proxy-layer rules.
+* DNS / FQDN policy via ``toFQDNs``.
+* ICMP-specific policy rules.
+* Service-based policy targets such as ``toServices``.
+* Identity-aware selectors and special entities.
+* Node selectors, external groups, and CIDR-group integrations.
+* Proxy-dependent authentication semantics.
+* Any policy behavior that depends on eBPF-only datapath hooks.
 
 Security policies can be specified and imported via the following mechanisms:
 
