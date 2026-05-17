@@ -239,12 +239,12 @@ expect_fail udp "${namespace}" egress "[${blocked6}]:8081"
 
 agent_node="${server_node}"
 table="$(docker exec "${agent_node}" nft list table inet cilium_noebpf)"
-if ! grep -q "ip daddr ${server4} tcp dport 8080 accept" <<<"${table}"; then
+if ! grep -q "ip daddr ${server4} tcp dport 8080 counter packets" <<<"${table}"; then
   echo "expected nft policy allow for ${server4} tcp dport 8080" >&2
   docker exec "${agent_node}" nft list table inet cilium_noebpf >&2 || true
   exit 1
 fi
-if ! grep -q "ip6 daddr ${server6} udp dport 8081 accept" <<<"${table}"; then
+if ! grep -q "ip6 daddr ${server6} udp dport 8081 counter packets" <<<"${table}"; then
   echo "expected nft policy allow for ${server6} udp dport 8081" >&2
   docker exec "${agent_node}" nft list table inet cilium_noebpf >&2 || true
   exit 1

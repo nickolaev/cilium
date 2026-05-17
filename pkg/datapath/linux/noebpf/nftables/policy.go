@@ -6,10 +6,20 @@ package nftables
 import (
 	"net/netip"
 	"sort"
+
+	metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 )
 
-// PolicyProtocol is the L4 protocol supported by the M1 no-eBPF KNP renderer.
+// PolicyProtocol is the L4 protocol supported by the no-eBPF KNP renderer.
 type PolicyProtocol = Protocol
+
+// LabelSelector is the minimal selector representation used by the no-eBPF
+// policy compiler. It supports standard matchLabels and matchExpressions
+// semantics.
+type LabelSelector struct {
+	MatchLabels      map[string]string
+	MatchExpressions []metav1.LabelSelectorRequirement
+}
 
 // Pod describes the small amount of pod state needed by the no-eBPF policy
 // renderer. A future controller will build this from Kubernetes Pods,
@@ -20,13 +30,14 @@ type Pod struct {
 	IPs             []netip.Addr
 	Labels          map[string]string
 	NamespaceLabels map[string]string
+	NamedPorts      map[string][]Port
 	Local           bool
 }
 
 // Peer selects allowed peer IPs for a rule. Empty selectors match all peers.
 type Peer struct {
-	PodSelector       map[string]string
-	NamespaceSelector map[string]string
+	PodSelector       *LabelSelector
+	NamespaceSelector *LabelSelector
 	IPBlock           *netip.Prefix
 	Except            []netip.Prefix
 }
@@ -35,12 +46,14 @@ type Peer struct {
 type Port struct {
 	Protocol PolicyProtocol
 	Port     uint16
+	EndPort  uint16
 }
 
 // PolicyRule is a minimal K8s NetworkPolicy-like allow rule.
 type PolicyRule struct {
-	Peers []Peer
-	Ports []Port
+	Peers         []Peer
+	Ports         []Port
+	MatchAllPorts bool
 }
 
 // EndpointPolicySpec is the per-local-endpoint policy shape consumed by the
@@ -76,12 +89,17 @@ func CompileEndpointPolicy(spec EndpointPolicySpec, pods []Pod) []EndpointPolicy
 func compileIngressAllows(endpointIP netip.Addr, rule PolicyRule, pods []Pod) []PolicyAllow {
 	var out []PolicyAllow
 	endpointPrefix := netip.PrefixFrom(endpointIP, endpointIP.BitLen())
+	ports := policyPorts(rule)
+	if len(ports) == 0 {
+		return nil
+	}
 	for _, peerPrefix := range policyPeerPrefixes(endpointIP, rule, pods) {
-		for _, port := range policyPorts(rule) {
+		for _, port := range ports {
 			out = append(out, PolicyAllow{
 				Source:      peerPrefix,
 				Destination: endpointPrefix,
 				Port:        port.Port,
+				EndPort:     port.EndPort,
 				Protocol:    port.Protocol,
 			})
 		}
@@ -92,12 +110,17 @@ func compileIngressAllows(endpointIP netip.Addr, rule PolicyRule, pods []Pod) []
 func compileEgressAllows(endpointIP netip.Addr, rule PolicyRule, pods []Pod) []PolicyAllow {
 	var out []PolicyAllow
 	endpointPrefix := netip.PrefixFrom(endpointIP, endpointIP.BitLen())
+	ports := policyPorts(rule)
+	if len(ports) == 0 {
+		return nil
+	}
 	for _, peerPrefix := range policyPeerPrefixes(endpointIP, rule, pods) {
-		for _, port := range policyPorts(rule) {
+		for _, port := range ports {
 			out = append(out, PolicyAllow{
 				Source:      endpointPrefix,
 				Destination: peerPrefix,
 				Port:        port.Port,
+				EndPort:     port.EndPort,
 				Protocol:    port.Protocol,
 			})
 		}
@@ -106,10 +129,13 @@ func compileEgressAllows(endpointIP netip.Addr, rule PolicyRule, pods []Pod) []P
 }
 
 func policyPorts(rule PolicyRule) []Port {
-	ports := rule.Ports
-	if len(ports) == 0 {
-		ports = []Port{{Protocol: ProtocolTCP, Port: 0}}
+	if rule.MatchAllPorts {
+		return []Port{{Protocol: ProtocolTCP}}
 	}
+	if len(rule.Ports) == 0 {
+		return nil
+	}
+	ports := append([]Port(nil), rule.Ports...)
 	for i := range ports {
 		if ports[i].Protocol == "" {
 			ports[i].Protocol = ProtocolTCP
@@ -146,10 +172,10 @@ func peerPrefixes(peer Peer, pods []Pod) []netip.Prefix {
 	}
 	var out []netip.Prefix
 	for _, pod := range pods {
-		if !labelsMatch(pod.Labels, peer.PodSelector) {
+		if !selectorMatches(pod.Labels, peer.PodSelector) {
 			continue
 		}
-		if len(peer.NamespaceSelector) > 0 && !labelsMatch(pod.NamespaceLabels, peer.NamespaceSelector) {
+		if !selectorMatches(pod.NamespaceLabels, peer.NamespaceSelector) {
 			continue
 		}
 		for _, ip := range pod.IPs {
@@ -159,13 +185,47 @@ func peerPrefixes(peer Peer, pods []Pod) []netip.Prefix {
 	return out
 }
 
-func labelsMatch(labels, selector map[string]string) bool {
-	for k, v := range selector {
+func selectorMatches(labels map[string]string, selector *LabelSelector) bool {
+	if selector == nil {
+		return true
+	}
+	for k, v := range selector.MatchLabels {
 		if labels[k] != v {
 			return false
 		}
 	}
+	for _, expr := range selector.MatchExpressions {
+		switch expr.Operator {
+		case metav1.LabelSelectorOpIn:
+			if !containsString(expr.Values, labels[expr.Key]) {
+				return false
+			}
+		case metav1.LabelSelectorOpNotIn:
+			if containsString(expr.Values, labels[expr.Key]) {
+				return false
+			}
+		case metav1.LabelSelectorOpExists:
+			if _, ok := labels[expr.Key]; !ok {
+				return false
+			}
+		case metav1.LabelSelectorOpDoesNotExist:
+			if _, ok := labels[expr.Key]; ok {
+				return false
+			}
+		default:
+			return false
+		}
+	}
 	return true
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func subtractExcept(block netip.Prefix, except []netip.Prefix) []netip.Prefix {

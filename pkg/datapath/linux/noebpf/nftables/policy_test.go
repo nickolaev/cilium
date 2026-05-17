@@ -17,7 +17,7 @@ func TestCompileEndpointPolicyDualStack(t *testing.T) {
 		Pod:         server,
 		IngressDeny: true,
 		IngressRules: []PolicyRule{{
-			Peers: []Peer{{PodSelector: map[string]string{"role": "client"}}},
+			Peers: []Peer{{PodSelector: selectorFor(map[string]string{"role": "client"})}},
 			Ports: []Port{{Protocol: ProtocolTCP, Port: 8080}},
 		}},
 	}, []Pod{client})
@@ -30,10 +30,10 @@ func TestCompileEndpointPolicyDualStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"ip saddr 10.244.1.20/32 ip daddr 10.244.1.10/32 tcp dport 8080 accept",
-		"ip daddr 10.244.1.10 drop",
-		"ip6 saddr fd00:10:244:1::20/128 ip6 daddr fd00:10:244:1::10/128 tcp dport 8080 accept",
-		"ip6 daddr fd00:10:244:1::10 drop",
+		"ip saddr 10.244.1.20/32 ip daddr 10.244.1.10/32 tcp dport 8080 counter accept",
+		"ip daddr 10.244.1.10 counter drop",
+		"ip6 saddr fd00:10:244:1::20/128 ip6 daddr fd00:10:244:1::10/128 tcp dport 8080 counter accept",
+		"ip6 daddr fd00:10:244:1::10 counter drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("missing %q in:\n%s", want, script)
@@ -64,7 +64,7 @@ func TestCompileEndpointPolicyEgressUsesEndpointAsSource(t *testing.T) {
 		Pod:        client,
 		EgressDeny: true,
 		EgressRules: []PolicyRule{{
-			Peers: []Peer{{PodSelector: map[string]string{"app": "server"}}},
+			Peers: []Peer{{PodSelector: selectorFor(map[string]string{"app": "server"})}},
 			Ports: []Port{{Protocol: ProtocolTCP, Port: 8080}},
 		}},
 	}, []Pod{server})
@@ -74,8 +74,8 @@ func TestCompileEndpointPolicyEgressUsesEndpointAsSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"ip saddr 10.244.1.20/32 ip daddr 10.244.1.10/32 tcp dport 8080 accept",
-		"ip saddr 10.244.1.20 drop",
+		"ip saddr 10.244.1.20/32 ip daddr 10.244.1.10/32 tcp dport 8080 counter accept",
+		"ip saddr 10.244.1.20 counter drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("missing %q in:\n%s", want, script)
@@ -92,7 +92,8 @@ func TestCompileEndpointPolicyNamespaceSelector(t *testing.T) {
 		Pod:         server,
 		IngressDeny: true,
 		IngressRules: []PolicyRule{{
-			Peers: []Peer{{NamespaceSelector: map[string]string{"team": "blue"}, PodSelector: map[string]string{"app": "client"}}},
+			Peers:         []Peer{{NamespaceSelector: selectorFor(map[string]string{"team": "blue"}), PodSelector: selectorFor(map[string]string{"app": "client"})}},
+			MatchAllPorts: true,
 		}},
 	}, []Pod{client, other})
 
@@ -100,12 +101,19 @@ func TestCompileEndpointPolicyNamespaceSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(script, "ip saddr 10.244.1.20/32 ip daddr 10.244.1.10/32 accept") {
+	if !strings.Contains(script, "ip saddr 10.244.1.20/32 ip daddr 10.244.1.10/32 counter accept") {
 		t.Fatalf("missing namespace-selected client allow in:\n%s", script)
 	}
 	if strings.Contains(script, "10.244.1.30") {
 		t.Fatalf("unexpected red namespace client allow in:\n%s", script)
 	}
+}
+
+func selectorFor(labels map[string]string) *LabelSelector {
+	if labels == nil {
+		return nil
+	}
+	return &LabelSelector{MatchLabels: labels}
 }
 
 func TestCompileEndpointPolicyIPBlockPartialExcept(t *testing.T) {
@@ -114,7 +122,8 @@ func TestCompileEndpointPolicyIPBlockPartialExcept(t *testing.T) {
 		Pod:         server,
 		IngressDeny: true,
 		IngressRules: []PolicyRule{{
-			Peers: []Peer{{IPBlock: ptr(netip.MustParsePrefix("10.0.0.0/8")), Except: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/16")}}},
+			Peers:         []Peer{{IPBlock: ptr(netip.MustParsePrefix("10.0.0.0/8")), Except: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/16")}}},
+			MatchAllPorts: true,
 		}},
 	}, nil)
 	if len(policies) != 1 || len(policies[0].IngressAllow) == 0 {

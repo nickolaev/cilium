@@ -1,12 +1,12 @@
-# Experimental no-eBPF dual-stack values for the linux-route Service phase.
+# Experimental no-eBPF dual-stack values for the linux-route Service profile.
 #
 # Create the kind cluster with kube-proxy disabled, for example:
 #   KUBEPROXY_MODE=none IPFAMILY=dual ./contrib/scripts/kind.sh
 #
-# This profile is intentionally scoped to the Phase 2 Service MVP: kube-proxy is
-# disabled and ClusterIP/NodePort traffic is implemented by the no-eBPF nftables
-# backend. Standard NetworkPolicy is left disabled here so Phase 2 validation
-# does not accidentally depend on Phase 3 policy work.
+# This profile is intentionally scoped to the service-focused no-eBPF profile:
+# kube-proxy is disabled and ClusterIP/NodePort traffic is implemented by the
+# no-eBPF nftables backend. Standard NetworkPolicy is left disabled here so
+# service validation does not accidentally depend on policy work.
 bpf:
   datapathMode: linux-route
   masquerade: false
@@ -24,8 +24,8 @@ k8s:
   requireIPv4PodCIDR: true
   requireIPv6PodCIDR: true
 
-# Keep the existing eBPF KPR/socket-LB disabled. The M1 plan calls for a
-# separate no-eBPF Linux-rule Service replacement flag instead of overloading
+# Keep the existing eBPF KPR/socket-LB disabled. The no-eBPF branch uses a
+# separate Linux-rule Service replacement flag instead of overloading
 # kubeProxyReplacement=true.
 kubeProxyReplacement: false
 socketLB:
@@ -36,6 +36,8 @@ noEBPF:
     enabled: true
   networkPolicy:
     enabled: false
+
+localRedirectPolicy: true
 
 # The experimental no-eBPF nftables backend shells out to nft(8). The CI image
 # used by kind-fast does not package nftables yet, so the kind profile exposes
@@ -97,11 +99,11 @@ extraHostPathMounts:
     hostPathType: File
     readOnly: true
 
-# Masquerade/SNAT-sensitive cases are outside the M1 spike.
+# Masquerade/SNAT-sensitive cases are outside the supported no-eBPF scope.
 enableIPv4Masquerade: false
 enableIPv6Masquerade: false
 
-# Explicit Phase 2 cuts.
+# Explicit cuts for the service-focused profile.
 l7Proxy: false
 policyEnforcementMode: never
 hostFirewall:

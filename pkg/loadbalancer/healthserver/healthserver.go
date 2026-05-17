@@ -101,8 +101,7 @@ func ChooseHealthServerLoopbackAddressForTesting() netip.Addr {
 }
 
 func (s *healthServer) controlLoop(ctx context.Context, health cell.Health) error {
-	extCfg := s.params.ExtConfig
-	if !extCfg.KubeProxyReplacement || !s.params.Config.EnableHealthCheckNodePort {
+	if !s.shouldRun() {
 		return nil
 	}
 
@@ -239,6 +238,11 @@ func (s *healthServer) controlLoop(ctx context.Context, health cell.Health) erro
 		case <-watch:
 		}
 	}
+}
+
+func (s *healthServer) shouldRun() bool {
+	extCfg := s.params.ExtConfig
+	return (extCfg.KubeProxyReplacement || extCfg.EnableNoEBPFServices) && s.params.Config.EnableHealthCheckNodePort
 }
 
 func (s *healthServer) cleanupListeners(ctx context.Context) {

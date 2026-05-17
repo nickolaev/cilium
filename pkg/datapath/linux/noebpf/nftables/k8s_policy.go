@@ -15,10 +15,11 @@ import (
 
 const namespaceLabel = "io.kubernetes.pod.namespace"
 
-// PoliciesFromK8sNetworkPolicies compiles the small M1 subset of Kubernetes
-// NetworkPolicy into nftables endpoint policy. It intentionally handles the
-// certification-critical 80/20 subset first: local pods, numeric TCP/UDP ports,
-// pod selectors, all-namespace selectors, same-namespace defaults, and ipBlock.
+// PoliciesFromK8sNetworkPolicies compiles the supported no-eBPF subset of
+// Kubernetes NetworkPolicy into nftables endpoint policy. It intentionally
+// handles the certification-relevant 80/20 subset first: local pods, TCP/UDP/
+// SCTP ports, pod selectors, namespace selectors, same-namespace defaults,
+// named ports, endPort, matchExpressions, and ipBlock.
 func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, networkPolicies []*networkingv1.NetworkPolicy) ([]EndpointPolicy, error) {
 	pods := podsFromK8sPods(localPods, allPods, namespaces)
 	byPod := map[string]*EndpointPolicySpec{}
@@ -27,12 +28,9 @@ func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*c
 		if np == nil {
 			continue
 		}
-		if len(np.Spec.PodSelector.MatchExpressions) > 0 {
-			return nil, fmt.Errorf("networkpolicy %s/%s podSelector: matchExpressions are not supported", np.Namespace, np.Name)
-		}
 		for i := range pods {
 			pod := pods[i]
-			if !pod.Local || pod.Namespace != np.Namespace || !labelSelectorMatches(np.Spec.PodSelector, pod.Labels) {
+			if !pod.Local || pod.Namespace != np.Namespace || !selectorMatches(pod.Labels, selectorFromK8s(&np.Spec.PodSelector)) {
 				continue
 			}
 
@@ -46,21 +44,25 @@ func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*c
 			if policyHasIngress(np) {
 				spec.IngressDeny = true
 				for _, rule := range np.Spec.Ingress {
-					r, err := knpIngressRule(np.Namespace, rule)
+					r, err := knpIngressRule(np.Namespace, pod, rule)
 					if err != nil {
 						return nil, fmt.Errorf("networkpolicy %s/%s ingress: %w", np.Namespace, np.Name, err)
 					}
-					spec.IngressRules = append(spec.IngressRules, r)
+					if r.MatchAllPorts || len(r.Ports) > 0 {
+						spec.IngressRules = append(spec.IngressRules, r)
+					}
 				}
 			}
 			if policyHasEgress(np) {
 				spec.EgressDeny = true
 				for _, rule := range np.Spec.Egress {
-					r, err := knpEgressRule(np.Namespace, rule)
+					r, err := knpEgressRule(np.Namespace, pod, rule)
 					if err != nil {
 						return nil, fmt.Errorf("networkpolicy %s/%s egress: %w", np.Namespace, np.Name, err)
 					}
-					spec.EgressRules = append(spec.EgressRules, r)
+					if r.MatchAllPorts || len(r.Ports) > 0 {
+						spec.EgressRules = append(spec.EgressRules, r)
+					}
 				}
 			}
 		}
@@ -140,6 +142,15 @@ func podFromK8sPod(kp *corev1.Pod, namespaceLabels map[string]map[string]string)
 			pod.IPs = append(pod.IPs, ip)
 		}
 	}
+	for _, container := range kp.Spec.Containers {
+		for _, cp := range container.Ports {
+			if cp.Name == "" || cp.ContainerPort <= 0 {
+				continue
+			}
+			proto := protocolFromCore(cp.Protocol)
+			pod.NamedPorts = appendNamedPort(pod.NamedPorts, cp.Name, Port{Protocol: proto, Port: uint16(cp.ContainerPort)})
+		}
+	}
 	return pod, len(pod.IPs) > 0
 }
 
@@ -167,28 +178,28 @@ func policyHasEgress(np *networkingv1.NetworkPolicy) bool {
 	return false
 }
 
-func knpIngressRule(policyNamespace string, rule networkingv1.NetworkPolicyIngressRule) (PolicyRule, error) {
+func knpIngressRule(policyNamespace string, endpoint Pod, rule networkingv1.NetworkPolicyIngressRule) (PolicyRule, error) {
 	peers, err := knpPeers(policyNamespace, rule.From)
 	if err != nil {
 		return PolicyRule{}, err
 	}
-	ports, err := knpPorts(rule.Ports)
+	ports, matchAll, err := knpPorts(endpoint, rule.Ports)
 	if err != nil {
 		return PolicyRule{}, err
 	}
-	return PolicyRule{Peers: peers, Ports: ports}, nil
+	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, nil
 }
 
-func knpEgressRule(policyNamespace string, rule networkingv1.NetworkPolicyEgressRule) (PolicyRule, error) {
+func knpEgressRule(policyNamespace string, endpoint Pod, rule networkingv1.NetworkPolicyEgressRule) (PolicyRule, error) {
 	peers, err := knpPeers(policyNamespace, rule.To)
 	if err != nil {
 		return PolicyRule{}, err
 	}
-	ports, err := knpPorts(rule.Ports)
+	ports, matchAll, err := knpPorts(endpoint, rule.Ports)
 	if err != nil {
 		return PolicyRule{}, err
 	}
-	return PolicyRule{Peers: peers, Ports: ports}, nil
+	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, nil
 }
 
 func knpPeers(policyNamespace string, peers []networkingv1.NetworkPolicyPeer) ([]Peer, error) {
@@ -215,30 +226,20 @@ func knpPeers(policyNamespace string, peers []networkingv1.NetworkPolicyPeer) ([
 			continue
 		}
 
-		var err error
-		p.PodSelector, err = selectorMatchLabels(peer.PodSelector)
-		if err != nil {
-			return nil, err
-		}
+		p.PodSelector = selectorFromK8s(peer.PodSelector)
 		if peer.NamespaceSelector == nil {
-			if p.PodSelector == nil {
-				p.PodSelector = map[string]string{}
-			}
-			p.PodSelector[namespaceLabel] = policyNamespace
+			p.NamespaceSelector = &LabelSelector{MatchLabels: map[string]string{namespaceLabel: policyNamespace}}
 		} else {
-			p.NamespaceSelector, err = selectorMatchLabels(peer.NamespaceSelector)
-			if err != nil {
-				return nil, err
-			}
+			p.NamespaceSelector = selectorFromK8s(peer.NamespaceSelector)
 		}
 		out = append(out, p)
 	}
 	return out, nil
 }
 
-func knpPorts(ports []networkingv1.NetworkPolicyPort) ([]Port, error) {
+func knpPorts(endpoint Pod, ports []networkingv1.NetworkPolicyPort) ([]Port, bool, error) {
 	if len(ports) == 0 {
-		return nil, nil
+		return nil, true, nil
 	}
 	out := make([]Port, 0, len(ports))
 	for _, port := range ports {
@@ -249,47 +250,79 @@ func knpPorts(ports []networkingv1.NetworkPolicyPort) ([]Port, error) {
 				proto = ProtocolTCP
 			case corev1.ProtocolUDP:
 				proto = ProtocolUDP
+			case corev1.ProtocolSCTP:
+				proto = ProtocolSCTP
 			default:
-				return nil, fmt.Errorf("unsupported protocol %s", *port.Protocol)
+				return nil, false, fmt.Errorf("unsupported protocol %s", *port.Protocol)
 			}
 		}
 		if port.Port == nil {
 			out = append(out, Port{Protocol: proto})
 			continue
 		}
-		if port.EndPort != nil {
-			return nil, fmt.Errorf("endPort is not supported")
+		if port.EndPort != nil && port.Port.Type != 0 {
+			return nil, false, fmt.Errorf("endPort is not supported with named ports")
 		}
-		if port.Port.Type != 0 { // named ports are not in the M1 subset.
-			return nil, fmt.Errorf("named ports are not supported")
+		if port.Port.Type != 0 {
+			out = append(out, resolveNamedPorts(endpoint, port.Port.StrVal, proto)...)
+			continue
+		}
+		if port.EndPort != nil {
+			if *port.EndPort < port.Port.IntVal {
+				return nil, false, fmt.Errorf("endPort must be greater than or equal to port")
+			}
+			out = append(out, Port{Protocol: proto, Port: uint16(port.Port.IntVal), EndPort: uint16(*port.EndPort)})
+			continue
 		}
 		out = append(out, Port{Protocol: proto, Port: uint16(port.Port.IntVal)})
 	}
-	return out, nil
+	if len(out) == 0 {
+		return nil, false, nil
+	}
+	return out, false, nil
 }
 
-func selectorMatchLabels(sel *metav1.LabelSelector) (map[string]string, error) {
+func selectorFromK8s(sel *metav1.LabelSelector) *LabelSelector {
 	if sel == nil {
-		return nil, nil
+		return nil
 	}
-	if len(sel.MatchExpressions) > 0 {
-		return nil, fmt.Errorf("matchExpressions are not supported")
-	}
-	out := make(map[string]string, len(sel.MatchLabels))
+	out := &LabelSelector{MatchLabels: make(map[string]string, len(sel.MatchLabels)), MatchExpressions: append([]metav1.LabelSelectorRequirement(nil), sel.MatchExpressions...)}
 	for k, v := range sel.MatchLabels {
-		out[k] = string(v)
+		out.MatchLabels[k] = string(v)
 	}
-	return out, nil
+	return out
 }
 
-func labelSelectorMatches(sel metav1.LabelSelector, labels map[string]string) bool {
-	for k, v := range sel.MatchLabels {
-		if labels[k] != string(v) {
-			return false
-		}
+func protocolFromCore(proto corev1.Protocol) Protocol {
+	switch proto {
+	case corev1.ProtocolUDP:
+		return ProtocolUDP
+	case corev1.ProtocolSCTP:
+		return ProtocolSCTP
+	default:
+		return ProtocolTCP
 	}
-	// PoliciesFromK8sNetworkPolicies rejects matchExpressions before calling this
-	// helper. Keep the defensive false here so direct helper usage cannot
-	// accidentally over-select endpoints.
-	return len(sel.MatchExpressions) == 0
+}
+
+func appendNamedPort(existing map[string][]Port, name string, port Port) map[string][]Port {
+	if existing == nil {
+		existing = map[string][]Port{}
+	}
+	existing[name] = append(existing[name], port)
+	return existing
+}
+
+func resolveNamedPorts(endpoint Pod, name string, proto Protocol) []Port {
+	if endpoint.NamedPorts == nil {
+		return nil
+	}
+	var out []Port
+	for _, candidate := range endpoint.NamedPorts[name] {
+		if candidate.Protocol != "" && candidate.Protocol != proto {
+			continue
+		}
+		candidate.Protocol = proto
+		out = append(out, candidate)
+	}
+	return out
 }

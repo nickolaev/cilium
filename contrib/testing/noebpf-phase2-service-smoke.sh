@@ -125,6 +125,157 @@ docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http:
 docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://${node4}:30080/hostname" >/dev/null
 docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://[${node6}]:30080/hostname" >/dev/null
 
+echo "ExternalIPs check"
+cat <<YAML | "${kubectl_cmd[@]}" apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-ext
+  namespace: ${namespace}
+spec:
+  type: ClusterIP
+  externalIPs:
+  - ${node4}
+  - ${node6}
+  selector:
+    app: echo
+  ports:
+  - name: http
+    port: 38082
+    targetPort: 8080
+    protocol: TCP
+YAML
+
+pod_connect tcp "${node4}:38082"
+pod_connect tcp "[${node6}]:38082"
+docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://${node4}:38082/hostname" >/dev/null
+docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://[${node6}]:38082/hostname" >/dev/null
+
+echo "healthCheckNodePort check"
+cat <<YAML | "${kubectl_cmd[@]}" apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-hc
+  namespace: ${namespace}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-hc
+  template:
+    metadata:
+      labels:
+        app: echo-hc
+    spec:
+      nodeName: ${worker_node}
+      containers:
+      - name: echo
+        image: registry.k8s.io/e2e-test-images/agnhost:2.53
+        args: ["netexec", "--http-port=8080"]
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-hc
+  namespace: ${namespace}
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  healthCheckNodePort: 30999
+  selector:
+    app: echo-hc
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    nodePort: 30180
+    protocol: TCP
+YAML
+"${kubectl_cmd[@]}" -n "${namespace}" rollout status deploy/echo-hc --timeout=180s
+"${kubectl_cmd[@]}" -n "${namespace}" wait --for=condition=Ready pod -l app=echo-hc --timeout=180s
+for _ in $(seq 1 30); do
+  if docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://${node4}:30999/" | grep -q '"localEndpoints":1'; then
+    break
+  fi
+  sleep 1
+done
+if ! docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://${node4}:30999/" | grep -q '"localEndpoints":1'; then
+  echo "healthCheckNodePort did not report a local endpoint" >&2
+  docker exec "${worker_node}" curl -g -sS --connect-timeout 3 --max-time 5 "http://${node4}:30999/" >&2 || true
+  exit 1
+fi
+
+echo "LocalRedirectPolicy check"
+cat <<YAML | "${kubectl_cmd[@]}" apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lrp-backend
+  namespace: ${namespace}
+  labels:
+    app: lrp-backend
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: ${worker_node}
+  containers:
+  - name: backend
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53
+    args: ["netexec", "--http-port=80"]
+    ports:
+    - containerPort: 80
+      protocol: TCP
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumLocalRedirectPolicy
+metadata:
+  name: lrp-demo
+  namespace: ${namespace}
+spec:
+  redirectFrontend:
+    addressMatcher:
+      ip: "169.254.169.254"
+      toPorts:
+      - port: "18080"
+        protocol: TCP
+  redirectBackend:
+    localEndpointSelector:
+      matchLabels:
+        app: lrp-backend
+    toPorts:
+    - port: "80"
+      protocol: TCP
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lrp-client
+  namespace: ${namespace}
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: ${worker_node}
+  containers:
+  - name: client
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53
+    command: ["sleep", "36000"]
+YAML
+"${kubectl_cmd[@]}" -n "${namespace}" wait --for=condition=Ready pod/lrp-backend pod/lrp-client --timeout=180s
+backend_name="$("${kubectl_cmd[@]}" -n "${namespace}" get pod -l app=lrp-backend -o jsonpath='{.items[0].metadata.name}')"
+for _ in $(seq 1 30); do
+  if "${kubectl_cmd[@]}" -n "${namespace}" exec lrp-client -- curl -g -sS --connect-timeout 3 --max-time 5 "http://169.254.169.254:18080/hostname" | grep -q "${backend_name}"; then
+    break
+  fi
+  sleep 1
+done
+if ! "${kubectl_cmd[@]}" -n "${namespace}" exec lrp-client -- curl -g -sS --connect-timeout 3 --max-time 5 "http://169.254.169.254:18080/hostname" | grep -q "${backend_name}"; then
+  echo "LocalRedirectPolicy did not reach the expected backend" >&2
+  "${kubectl_cmd[@]}" -n "${namespace}" exec lrp-client -- curl -g -sS --connect-timeout 3 --max-time 5 "http://169.254.169.254:18080/hostname" >&2 || true
+  exit 1
+fi
+
 kube_dns4="$("${kubectl_cmd[@]}" -n kube-system get svc kube-dns -o jsonpath='{range .spec.clusterIPs[*]}{@}{"\n"}{end}' 2>/dev/null | grep -E '^[0-9.]+$' | head -n1 || true)"
 kube_dns6="$("${kubectl_cmd[@]}" -n kube-system get svc kube-dns -o jsonpath='{range .spec.clusterIPs[*]}{@}{"\n"}{end}' 2>/dev/null | grep -E ':' | head -n1 || true)"
 if [[ -n "${kube_dns4}" ]]; then
@@ -148,11 +299,16 @@ fi
 
 echo "service deletion cleanup check"
 "${kubectl_cmd[@]}" -n "${namespace}" delete svc echo >/dev/null
+"${kubectl_cmd[@]}" -n "${namespace}" delete svc echo-ext >/dev/null
+"${kubectl_cmd[@]}" -n "${namespace}" delete svc echo-hc >/dev/null
+"${kubectl_cmd[@]}" -n "${namespace}" delete deploy echo-hc >/dev/null
+"${kubectl_cmd[@]}" -n "${namespace}" delete ciliumlocalredirectpolicy lrp-demo >/dev/null
+"${kubectl_cmd[@]}" -n "${namespace}" delete pod lrp-backend lrp-client >/dev/null
 sleep 5
 table="$(docker exec "${worker_node}" nft list table inet cilium_noebpf)"
-if grep -Eq "${svc4}|${svc6}|30080|30081" <<<"${table}"; then
+if grep -Eq "${svc4}|${svc6}|30080|30081|38082|30180|30999|169.254.169.254|18080" <<<"${table}"; then
   echo "stale Service rules remain after deletion" >&2
-  grep -E "${svc4}|${svc6}|30080|30081" <<<"${table}" >&2 || true
+  grep -E "${svc4}|${svc6}|30080|30081|38082|30180|30999|169.254.169.254|18080" <<<"${table}" >&2 || true
   exit 1
 fi
 

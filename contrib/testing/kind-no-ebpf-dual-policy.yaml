@@ -1,4 +1,4 @@
-# Experimental no-eBPF dual-stack values for the NetworkPolicy phase.
+# Experimental no-eBPF dual-stack values for the policy-enabled profile.
 # Layer on top of kind-no-ebpf-dual.yaml to enable the nftables KNP backend.
 noEBPF:
   networkPolicy:

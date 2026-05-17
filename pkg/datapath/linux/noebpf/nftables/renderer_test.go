@@ -58,13 +58,13 @@ func TestRenderDualStackServiceAndPolicySpike(t *testing.T) {
 		"table inet cilium_noebpf",
 		"type nat hook prerouting priority dstnat; policy accept;",
 		"type nat hook output priority -100; policy accept;",
-		"ip daddr 10.245.0.10 udp dport 53 dnat to 10.244.1.20:53",
-		"ip6 daddr fd00:10:96::a udp dport 53 dnat to [fd00:10:244::20]:53",
+		"ip daddr 10.245.0.10 udp dport 53 counter dnat to 10.244.1.20:53",
+		"ip6 daddr fd00:10:96::a udp dport 53 counter dnat to [fd00:10:244::20]:53",
 		"ct state established,related accept",
-		"ip saddr 10.244.0.0/16 ip daddr 10.244.1.20/32 tcp dport 80 accept",
-		"ip daddr 10.244.1.20 drop",
-		"ip6 saddr fd00:10:244::/48 ip6 daddr fd00:10:244::20/128 tcp dport 80 accept",
-		"ip6 daddr fd00:10:244::20 drop",
+		"ip saddr 10.244.0.0/16 ip daddr 10.244.1.20/32 tcp dport 80 counter accept",
+		"ip daddr 10.244.1.20 counter drop",
+		"ip6 saddr fd00:10:244::/48 ip6 daddr fd00:10:244::20/128 tcp dport 80 counter accept",
+		"ip6 daddr fd00:10:244::20 counter drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("rendered script missing %q:\n%s", want, script)
@@ -108,8 +108,8 @@ func TestRenderServiceMultipleBackends(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"ip daddr 10.245.0.10 tcp dport 80 numgen random mod 2 == 0 dnat to 10.244.1.20:8080",
-		"ip daddr 10.245.0.10 tcp dport 80 dnat to 10.244.1.21:8080",
+		"ip daddr 10.245.0.10 tcp dport 80 numgen random mod 2 == 0 counter dnat to 10.244.1.20:8080",
+		"ip daddr 10.245.0.10 tcp dport 80 counter dnat to 10.244.1.21:8080",
 	} {
 		if count := strings.Count(script, want); count != 2 {
 			t.Fatalf("expected %q twice for prerouting and output, got %d:\n%s", want, count, script)
@@ -142,8 +142,8 @@ func TestRenderNodePortWildcardFrontend(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"meta nfproto ipv4 tcp dport 30080 dnat to 10.244.1.20:8080",
-		"meta nfproto ipv6 udp dport 30053 dnat to [fd00:10:244:1::20]:5353",
+		"meta nfproto ipv4 tcp dport 30080 counter dnat to 10.244.1.20:8080",
+		"meta nfproto ipv6 udp dport 30053 counter dnat to [fd00:10:244:1::20]:5353",
 	} {
 		if count := strings.Count(script, want); count != 2 {
 			t.Fatalf("expected wildcard NodePort %q twice for prerouting and output, got %d:\n%s", want, count, script)

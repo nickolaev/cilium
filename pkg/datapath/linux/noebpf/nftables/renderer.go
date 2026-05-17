@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright Authors of Cilium
 
-// Package nftables contains the first, deliberately small no-eBPF nftables
-// renderer used to prove the linux-route product-demo direction before it is
-// wired into the agent. It is intentionally pure string rendering for now: the
-// Phase 0 spike needs reviewable desired state and unit tests before adding a
-// privileged netlink executor.
+// Package nftables contains the no-eBPF nftables renderer used by the
+// linux-route branch. It renders reviewable desired state for the owned
+// cilium_noebpf table and is backed by unit tests before the privileged netlink
+// executor applies it.
 package nftables
 
 import (
@@ -24,20 +23,23 @@ const (
 type Protocol string
 
 const (
-	ProtocolTCP Protocol = "tcp"
-	ProtocolUDP Protocol = "udp"
+	ProtocolTCP  Protocol = "tcp"
+	ProtocolUDP  Protocol = "udp"
+	ProtocolSCTP Protocol = "sctp"
 )
 
-// ServiceDNAT is the minimal Phase 0 Service translation tuple. M1 will replace
-// this one-rule-per-backend shape with set/map based rendering once the hook
-// order and cleanup contract are proven.
+// ServiceDNAT is the Service translation tuple rendered into the owned nftables
+// table. The renderer currently emits one rule per backend to keep the
+// generated state easy to review and reconcile.
 type ServiceDNAT struct {
-	FrontendAddr netip.Addr
-	FrontendPort uint16
-	Protocol     Protocol
-	BackendAddr  netip.Addr
-	BackendPort  uint16
-	NodePort     bool
+	FrontendAddr    netip.Addr
+	FrontendPort    uint16
+	Protocol        Protocol
+	BackendAddr     netip.Addr
+	BackendPort     uint16
+	NodePort        bool
+	SourceRanges    []netip.Prefix
+	SessionAffinity bool
 }
 
 // PolicyAllow is a minimal allow tuple for the Phase 0 default-deny smoke.
@@ -45,6 +47,7 @@ type PolicyAllow struct {
 	Source      netip.Prefix
 	Destination netip.Prefix
 	Port        uint16
+	EndPort     uint16
 	Protocol    Protocol
 }
 
@@ -111,10 +114,10 @@ func Render(state DesiredState) (string, error) {
 			b.WriteString("\t\t" + allow.egressRule() + "\n")
 		}
 		if pol.IngressDeny {
-			b.WriteString("\t\t" + addrFamily(pol.EndpointIP) + " daddr " + pol.EndpointIP.String() + " drop\n")
+			b.WriteString("\t\t" + addrFamily(pol.EndpointIP) + " daddr " + pol.EndpointIP.String() + " counter drop\n")
 		}
 		if pol.EgressDeny {
-			b.WriteString("\t\t" + addrFamily(pol.EndpointIP) + " saddr " + pol.EndpointIP.String() + " drop\n")
+			b.WriteString("\t\t" + addrFamily(pol.EndpointIP) + " saddr " + pol.EndpointIP.String() + " counter drop\n")
 		}
 	}
 	b.WriteString("\t}\n")
@@ -127,10 +130,15 @@ func (s ServiceDNAT) validate() error {
 		return fmt.Errorf("service DNAT requires valid frontend and backend addresses")
 	}
 	if s.FrontendAddr.Is4() != s.BackendAddr.Is4() {
-		return fmt.Errorf("service DNAT does not support NAT46/NAT64 in no-eBPF M1")
+		return fmt.Errorf("service DNAT does not support NAT46/NAT64 in no-eBPF mode")
 	}
 	if s.FrontendPort == 0 || s.BackendPort == 0 {
 		return fmt.Errorf("service DNAT requires non-zero ports")
+	}
+	for _, prefix := range s.SourceRanges {
+		if !prefix.IsValid() {
+			return fmt.Errorf("service DNAT requires valid source ranges")
+		}
 	}
 	return validateProtocol(s.Protocol)
 }
@@ -146,6 +154,12 @@ func (p EndpointPolicy) validate() error {
 		if allow.Source.Addr().Is4() != allow.Destination.Addr().Is4() {
 			return fmt.Errorf("policy allow source and destination families must match")
 		}
+		if allow.Port == 0 && allow.EndPort != 0 {
+			return fmt.Errorf("policy allow endPort requires a starting port")
+		}
+		if allow.EndPort != 0 && allow.EndPort < allow.Port {
+			return fmt.Errorf("policy allow endPort must be >= port")
+		}
 		if err := validateProtocol(allow.Protocol); err != nil {
 			return err
 		}
@@ -155,10 +169,10 @@ func (p EndpointPolicy) validate() error {
 
 func validateProtocol(proto Protocol) error {
 	switch proto {
-	case ProtocolTCP, ProtocolUDP:
+	case ProtocolTCP, ProtocolUDP, ProtocolSCTP:
 		return nil
 	default:
-		return fmt.Errorf("unsupported no-eBPF M1 protocol %q", proto)
+		return fmt.Errorf("unsupported no-eBPF protocol %q", proto)
 	}
 }
 
@@ -167,11 +181,13 @@ type serviceKey struct {
 	port     uint16
 	protocol Protocol
 	nodePort bool
+	affinity bool
 }
 
 type serviceGroup struct {
 	serviceKey
-	backends []serviceBackend
+	sourceRanges []netip.Prefix
+	backends     []serviceBackend
 }
 
 type serviceBackend struct {
@@ -185,20 +201,65 @@ func (s ServiceDNAT) serviceKey() serviceKey {
 		port:     s.FrontendPort,
 		protocol: s.Protocol,
 		nodePort: s.NodePort,
+		affinity: s.SessionAffinity,
 	}
 }
 
 func (s serviceGroup) dnatRules() []string {
 	rules := make([]string, 0, len(s.backends))
+	sourceMatches := s.sourceRangeMatches()
+	if len(s.sourceRanges) > 0 && len(sourceMatches) == 0 {
+		return nil
+	}
 	for i, backend := range s.backends {
-		rule := s.match()
-		if i < len(s.backends)-1 {
-			rule += fmt.Sprintf(" numgen random mod %d == %d", len(s.backends), i)
+		match := s.match()
+		if len(sourceMatches) == 0 {
+			rule := match
+			if i < len(s.backends)-1 {
+				rule += backendSelectionExpression(s.serviceKey, len(s.backends), i)
+			}
+			rule += " counter dnat to " + formatBackend(backend.addr, backend.port)
+			rules = append(rules, rule)
+			continue
 		}
-		rule += " dnat to " + formatBackend(backend.addr, backend.port)
-		rules = append(rules, rule)
+		for _, sourceMatch := range sourceMatches {
+			rule := sourceMatch + " " + match
+			if i < len(s.backends)-1 {
+				rule += backendSelectionExpression(s.serviceKey, len(s.backends), i)
+			}
+			rule += " counter dnat to " + formatBackend(backend.addr, backend.port)
+			rules = append(rules, rule)
+		}
 	}
 	return rules
+}
+
+func backendSelectionExpression(key serviceKey, total, index int) string {
+	if key.affinity {
+		return fmt.Sprintf(" jhash %s saddr mod %d == %d", backendHashFamily(key.addr), total, index)
+	}
+	return fmt.Sprintf(" numgen random mod %d == %d", total, index)
+}
+
+func backendHashFamily(addr netip.Addr) string {
+	if addr.Is4() {
+		return "ip"
+	}
+	return "ip6"
+}
+
+func (s serviceGroup) sourceRangeMatches() []string {
+	if len(s.sourceRanges) == 0 {
+		return nil
+	}
+	var out []string
+	for _, prefix := range s.sourceRanges {
+		if prefix.Addr().Is4() != s.addr.Is4() {
+			continue
+		}
+		out = append(out, sourcePrefixMatch(prefix))
+	}
+	return out
 }
 
 func (s serviceGroup) match() string {
@@ -231,12 +292,16 @@ func (a PolicyAllow) egressRule() string {
 
 func (a PolicyAllow) rule() string {
 	family := prefixFamily(a.Source)
-	if a.Port == 0 {
-		return fmt.Sprintf("%s saddr %s %s daddr %s accept",
+	if a.Port == 0 && a.EndPort == 0 {
+		return fmt.Sprintf("%s saddr %s %s daddr %s counter accept",
 			family, a.Source, family, a.Destination)
 	}
-	return fmt.Sprintf("%s saddr %s %s daddr %s %s dport %d accept",
-		family, a.Source, family, a.Destination, a.Protocol, a.Port)
+	portExpr := fmt.Sprintf("%d", a.Port)
+	if a.EndPort != 0 && a.EndPort != a.Port {
+		portExpr = fmt.Sprintf("%d-%d", a.Port, a.EndPort)
+	}
+	return fmt.Sprintf("%s saddr %s %s daddr %s %s dport %s counter accept",
+		family, a.Source, family, a.Destination, a.Protocol, portExpr)
 }
 
 func addrFamily(addr netip.Addr) string {
@@ -254,25 +319,46 @@ func prefixFamily(prefix netip.Prefix) string {
 }
 
 func groupedServices(in []ServiceDNAT) []serviceGroup {
-	byKey := map[serviceKey][]serviceBackend{}
+	type groupedService struct {
+		backends     []serviceBackend
+		sourceRanges []netip.Prefix
+	}
+	byKey := map[serviceKey]*groupedService{}
 	for _, svc := range in {
 		key := svc.serviceKey()
-		byKey[key] = append(byKey[key], serviceBackend{addr: svc.BackendAddr, port: svc.BackendPort})
+		group := byKey[key]
+		if group == nil {
+			group = &groupedService{}
+			byKey[key] = group
+		}
+		group.backends = append(group.backends, serviceBackend{addr: svc.BackendAddr, port: svc.BackendPort})
+		group.sourceRanges = appendUniquePrefixes(group.sourceRanges, svc.SourceRanges)
 	}
 	out := make([]serviceGroup, 0, len(byKey))
-	for key, backends := range byKey {
+	for key, group := range byKey {
+		backends := group.backends
 		sort.Slice(backends, func(i, j int) bool {
 			if backends[i].addr == backends[j].addr {
 				return backends[i].port < backends[j].port
 			}
 			return backends[i].addr.Less(backends[j].addr)
 		})
-		out = append(out, serviceGroup{serviceKey: key, backends: backends})
+		sourceRanges := append([]netip.Prefix(nil), group.sourceRanges...)
+		sort.Slice(sourceRanges, func(i, j int) bool {
+			if sourceRanges[i].Addr() == sourceRanges[j].Addr() {
+				return sourceRanges[i].Bits() < sourceRanges[j].Bits()
+			}
+			return sourceRanges[i].Addr().Less(sourceRanges[j].Addr())
+		})
+		out = append(out, serviceGroup{serviceKey: key, sourceRanges: sourceRanges, backends: backends})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].addr == out[j].addr {
 			if out[i].port == out[j].port {
 				if out[i].protocol == out[j].protocol {
+					if out[i].nodePort == out[j].nodePort {
+						return !out[i].affinity && out[j].affinity
+					}
 					return !out[i].nodePort && out[j].nodePort
 				}
 				return out[i].protocol < out[j].protocol
@@ -282,6 +368,30 @@ func groupedServices(in []ServiceDNAT) []serviceGroup {
 		return out[i].addr.Less(out[j].addr)
 	})
 	return out
+}
+
+func appendUniquePrefixes(dst, in []netip.Prefix) []netip.Prefix {
+	for _, prefix := range in {
+		found := false
+		for _, existing := range dst {
+			if existing == prefix {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, prefix)
+		}
+	}
+	return dst
+}
+
+func sourcePrefixMatch(prefix netip.Prefix) string {
+	family := "ip"
+	if prefix.Addr().Is6() {
+		family = "ip6"
+	}
+	return fmt.Sprintf("%s saddr %s", family, prefix)
 }
 
 func sortedPolicies(in []EndpointPolicy) []EndpointPolicy {
@@ -302,7 +412,10 @@ func sortedAllows(in []PolicyAllow) []PolicyAllow {
 		if out[i].Protocol != out[j].Protocol {
 			return out[i].Protocol < out[j].Protocol
 		}
-		return out[i].Port < out[j].Port
+		if out[i].Port != out[j].Port {
+			return out[i].Port < out[j].Port
+		}
+		return out[i].EndPort < out[j].EndPort
 	})
 	return out
 }
