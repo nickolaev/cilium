@@ -53,11 +53,13 @@ type PolicyAllow struct {
 
 // EndpointPolicy describes the tiny subset needed for the Phase 0 policy spike.
 type EndpointPolicy struct {
-	EndpointIP   netip.Addr
-	IngressDeny  bool
-	EgressDeny   bool
-	IngressAllow []PolicyAllow
-	EgressAllow  []PolicyAllow
+	EndpointIP       netip.Addr
+	IngressDeny      bool
+	EgressDeny       bool
+	IngressAllow     []PolicyAllow
+	EgressAllow      []PolicyAllow
+	IngressDenyRules []PolicyDeny
+	EgressDenyRules  []PolicyDeny
 }
 
 // DesiredState is the complete nftables desired-state script input for the
@@ -106,7 +108,13 @@ func Render(state DesiredState) (string, error) {
 	b.WriteString("\tchain policy_forward {\n")
 	b.WriteString("\t\ttype filter hook forward priority filter; policy accept;\n")
 	b.WriteString("\t\tct state established,related accept\n")
-	for _, pol := range sortedPolicies(state.Policies) {
+	for _, pol := range groupedEndpointPolicies(state.Policies) {
+		for _, deny := range sortedDenies(pol.IngressDenyRules) {
+			b.WriteString("\t\t" + deny.ingressRule() + "\n")
+		}
+		for _, deny := range sortedDenies(pol.EgressDenyRules) {
+			b.WriteString("\t\t" + deny.egressRule() + "\n")
+		}
 		for _, allow := range sortedAllows(pol.IngressAllow) {
 			b.WriteString("\t\t" + allow.ingressRule() + "\n")
 		}
@@ -148,21 +156,33 @@ func (p EndpointPolicy) validate() error {
 		return fmt.Errorf("endpoint policy requires a valid endpoint IP")
 	}
 	for _, allow := range append(append([]PolicyAllow{}, p.IngressAllow...), p.EgressAllow...) {
-		if !allow.Source.IsValid() || !allow.Destination.IsValid() {
-			return fmt.Errorf("policy allow requires valid source and destination prefixes")
-		}
-		if allow.Source.Addr().Is4() != allow.Destination.Addr().Is4() {
-			return fmt.Errorf("policy allow source and destination families must match")
-		}
-		if allow.Port == 0 && allow.EndPort != 0 {
-			return fmt.Errorf("policy allow endPort requires a starting port")
-		}
-		if allow.EndPort != 0 && allow.EndPort < allow.Port {
-			return fmt.Errorf("policy allow endPort must be >= port")
-		}
-		if err := validateProtocol(allow.Protocol); err != nil {
+		if err := validateRuleTuple(allow.Source, allow.Destination, allow.Port, allow.EndPort, allow.Protocol); err != nil {
 			return err
 		}
+	}
+	for _, deny := range append(append([]PolicyDeny{}, p.IngressDenyRules...), p.EgressDenyRules...) {
+		if err := validateRuleTuple(deny.Source, deny.Destination, deny.Port, deny.EndPort, deny.Protocol); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRuleTuple(source, destination netip.Prefix, port, endPort uint16, proto Protocol) error {
+	if !source.IsValid() || !destination.IsValid() {
+		return fmt.Errorf("policy rule requires valid source and destination prefixes")
+	}
+	if source.Addr().Is4() != destination.Addr().Is4() {
+		return fmt.Errorf("policy rule source and destination families must match")
+	}
+	if port == 0 && endPort != 0 {
+		return fmt.Errorf("policy rule endPort requires a starting port")
+	}
+	if endPort != 0 && endPort < port {
+		return fmt.Errorf("policy rule endPort must be >= port")
+	}
+	if err := validateProtocol(proto); err != nil {
+		return err
 	}
 	return nil
 }
@@ -291,17 +311,33 @@ func (a PolicyAllow) egressRule() string {
 }
 
 func (a PolicyAllow) rule() string {
-	family := prefixFamily(a.Source)
-	if a.Port == 0 && a.EndPort == 0 {
-		return fmt.Sprintf("%s saddr %s %s daddr %s counter accept",
-			family, a.Source, family, a.Destination)
+	return policyRuleString(a.Source, a.Destination, a.Port, a.EndPort, a.Protocol, "accept")
+}
+
+func (a PolicyDeny) ingressRule() string {
+	return a.rule()
+}
+
+func (a PolicyDeny) egressRule() string {
+	return a.rule()
+}
+
+func (a PolicyDeny) rule() string {
+	return policyRuleString(a.Source, a.Destination, a.Port, a.EndPort, a.Protocol, "drop")
+}
+
+func policyRuleString(source, destination netip.Prefix, port, endPort uint16, proto Protocol, verdict string) string {
+	family := prefixFamily(source)
+	if port == 0 && endPort == 0 {
+		return fmt.Sprintf("%s saddr %s %s daddr %s counter %s",
+			family, source, family, destination, verdict)
 	}
-	portExpr := fmt.Sprintf("%d", a.Port)
-	if a.EndPort != 0 && a.EndPort != a.Port {
-		portExpr = fmt.Sprintf("%d-%d", a.Port, a.EndPort)
+	portExpr := fmt.Sprintf("%d", port)
+	if endPort != 0 && endPort != port {
+		portExpr = fmt.Sprintf("%d-%d", port, endPort)
 	}
-	return fmt.Sprintf("%s saddr %s %s daddr %s %s dport %s counter accept",
-		family, a.Source, family, a.Destination, a.Protocol, portExpr)
+	return fmt.Sprintf("%s saddr %s %s daddr %s %s dport %s counter %s",
+		family, source, family, destination, proto, portExpr, verdict)
 }
 
 func addrFamily(addr netip.Addr) string {
@@ -394,14 +430,61 @@ func sourcePrefixMatch(prefix netip.Prefix) string {
 	return fmt.Sprintf("%s saddr %s", family, prefix)
 }
 
-func sortedPolicies(in []EndpointPolicy) []EndpointPolicy {
-	out := append([]EndpointPolicy(nil), in...)
+type endpointPolicyGroup struct {
+	EndpointIP       netip.Addr
+	IngressDeny      bool
+	EgressDeny       bool
+	IngressAllow     []PolicyAllow
+	EgressAllow      []PolicyAllow
+	IngressDenyRules []PolicyDeny
+	EgressDenyRules  []PolicyDeny
+}
+
+func groupedEndpointPolicies(in []EndpointPolicy) []endpointPolicyGroup {
+	byIP := map[netip.Addr]*endpointPolicyGroup{}
+	for _, pol := range in {
+		group := byIP[pol.EndpointIP]
+		if group == nil {
+			group = &endpointPolicyGroup{EndpointIP: pol.EndpointIP}
+			byIP[pol.EndpointIP] = group
+		}
+		group.IngressDeny = group.IngressDeny || pol.IngressDeny
+		group.EgressDeny = group.EgressDeny || pol.EgressDeny
+		group.IngressAllow = append(group.IngressAllow, pol.IngressAllow...)
+		group.EgressAllow = append(group.EgressAllow, pol.EgressAllow...)
+		group.IngressDenyRules = append(group.IngressDenyRules, pol.IngressDenyRules...)
+		group.EgressDenyRules = append(group.EgressDenyRules, pol.EgressDenyRules...)
+	}
+	out := make([]endpointPolicyGroup, 0, len(byIP))
+	for _, group := range byIP {
+		out = append(out, *group)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EndpointIP.Less(out[j].EndpointIP) })
 	return out
 }
 
 func sortedAllows(in []PolicyAllow) []PolicyAllow {
 	out := append([]PolicyAllow(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Source.String() != out[j].Source.String() {
+			return out[i].Source.String() < out[j].Source.String()
+		}
+		if out[i].Destination.String() != out[j].Destination.String() {
+			return out[i].Destination.String() < out[j].Destination.String()
+		}
+		if out[i].Protocol != out[j].Protocol {
+			return out[i].Protocol < out[j].Protocol
+		}
+		if out[i].Port != out[j].Port {
+			return out[i].Port < out[j].Port
+		}
+		return out[i].EndPort < out[j].EndPort
+	})
+	return out
+}
+
+func sortedDenies(in []PolicyDeny) []PolicyDeny {
+	out := append([]PolicyDeny(nil), in...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Source.String() != out[j].Source.String() {
 			return out[i].Source.String() < out[j].Source.String()

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/netip"
 
+	k8sConst "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
 	corev1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/core/v1"
 	networkingv1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/networking/v1"
 	metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	k8sTables "github.com/cilium/cilium/pkg/k8s/tables"
+	"github.com/cilium/cilium/pkg/option"
 )
 
 const namespaceLabel = "io.kubernetes.pod.namespace"
@@ -78,7 +80,11 @@ func PoliciesFromK8sNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*c
 func podsFromK8sPods(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace) []Pod {
 	namespaceLabels := map[string]map[string]string{}
 	for _, ns := range namespaces {
-		labels := map[string]string{namespaceLabel: ns.Name}
+		labels := map[string]string{
+			namespaceLabel:                     ns.Name,
+			k8sConst.LabelMetadataName:         ns.Name,
+			k8sConst.PodNamespaceMetaNameLabel: ns.Name,
+		}
 		for k, v := range ns.Labels {
 			labels[k] = v
 		}
@@ -130,8 +136,16 @@ func podFromK8sPod(kp *corev1.Pod, namespaceLabels map[string]map[string]string)
 		Labels:          map[string]string{namespaceLabel: kp.Namespace},
 		NamespaceLabels: map[string]string{namespaceLabel: kp.Namespace},
 	}
+	if option.Config.ClusterName != "" {
+		pod.Labels[k8sConst.PolicyLabelCluster] = option.Config.ClusterName
+	}
 	if labels, ok := namespaceLabels[kp.Namespace]; ok {
-		pod.NamespaceLabels = labels
+		pod.NamespaceLabels = map[string]string{}
+		for k, v := range labels {
+			pod.NamespaceLabels[k] = v
+			pod.NamespaceLabels[k8sConst.PodNamespaceMetaLabelsPrefix+k] = v
+		}
+		pod.NamespaceLabels[namespaceLabel] = kp.Namespace
 	}
 	for k, v := range kp.Labels {
 		pod.Labels[k] = v

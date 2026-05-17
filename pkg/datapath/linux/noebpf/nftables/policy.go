@@ -6,6 +6,7 @@ package nftables
 import (
 	"net/netip"
 	"sort"
+	"strings"
 
 	metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 )
@@ -56,14 +57,25 @@ type PolicyRule struct {
 	MatchAllPorts bool
 }
 
+// PolicyDeny is the rendered deny tuple used by explicit deny rules.
+type PolicyDeny struct {
+	Source      netip.Prefix
+	Destination netip.Prefix
+	Port        uint16
+	EndPort     uint16
+	Protocol    Protocol
+}
+
 // EndpointPolicySpec is the per-local-endpoint policy shape consumed by the
 // nftables renderer.
 type EndpointPolicySpec struct {
-	Pod          Pod
-	IngressDeny  bool
-	EgressDeny   bool
-	IngressRules []PolicyRule
-	EgressRules  []PolicyRule
+	Pod              Pod
+	IngressDeny      bool
+	EgressDeny       bool
+	IngressRules     []PolicyRule
+	EgressRules      []PolicyRule
+	IngressDenyRules []PolicyRule
+	EgressDenyRules  []PolicyRule
 }
 
 // CompileEndpointPolicy converts a minimal KNP-like endpoint policy into the
@@ -80,6 +92,12 @@ func CompileEndpointPolicy(spec EndpointPolicySpec, pods []Pod) []EndpointPolicy
 		}
 		for _, rule := range spec.EgressRules {
 			pol.EgressAllow = append(pol.EgressAllow, compileEgressAllows(ip, rule, pods)...)
+		}
+		for _, rule := range spec.IngressDenyRules {
+			pol.IngressDenyRules = append(pol.IngressDenyRules, compileIngressDenies(ip, rule, pods)...)
+		}
+		for _, rule := range spec.EgressDenyRules {
+			pol.EgressDenyRules = append(pol.EgressDenyRules, compileEgressDenies(ip, rule, pods)...)
 		}
 		out = append(out, pol)
 	}
@@ -117,6 +135,48 @@ func compileEgressAllows(endpointIP netip.Addr, rule PolicyRule, pods []Pod) []P
 	for _, peerPrefix := range policyPeerPrefixes(endpointIP, rule, pods) {
 		for _, port := range ports {
 			out = append(out, PolicyAllow{
+				Source:      endpointPrefix,
+				Destination: peerPrefix,
+				Port:        port.Port,
+				EndPort:     port.EndPort,
+				Protocol:    port.Protocol,
+			})
+		}
+	}
+	return out
+}
+
+func compileIngressDenies(endpointIP netip.Addr, rule PolicyRule, pods []Pod) []PolicyDeny {
+	var out []PolicyDeny
+	endpointPrefix := netip.PrefixFrom(endpointIP, endpointIP.BitLen())
+	ports := policyPorts(rule)
+	if len(ports) == 0 {
+		return nil
+	}
+	for _, peerPrefix := range policyPeerPrefixes(endpointIP, rule, pods) {
+		for _, port := range ports {
+			out = append(out, PolicyDeny{
+				Source:      peerPrefix,
+				Destination: endpointPrefix,
+				Port:        port.Port,
+				EndPort:     port.EndPort,
+				Protocol:    port.Protocol,
+			})
+		}
+	}
+	return out
+}
+
+func compileEgressDenies(endpointIP netip.Addr, rule PolicyRule, pods []Pod) []PolicyDeny {
+	var out []PolicyDeny
+	endpointPrefix := netip.PrefixFrom(endpointIP, endpointIP.BitLen())
+	ports := policyPorts(rule)
+	if len(ports) == 0 {
+		return nil
+	}
+	for _, peerPrefix := range policyPeerPrefixes(endpointIP, rule, pods) {
+		for _, port := range ports {
+			out = append(out, PolicyDeny{
 				Source:      endpointPrefix,
 				Destination: peerPrefix,
 				Port:        port.Port,
@@ -172,10 +232,11 @@ func peerPrefixes(peer Peer, pods []Pod) []netip.Prefix {
 	}
 	var out []netip.Prefix
 	for _, pod := range pods {
-		if !selectorMatches(pod.Labels, peer.PodSelector) {
+		combined := combinedPodLabels(pod)
+		if !selectorMatches(combined, peer.PodSelector) {
 			continue
 		}
-		if !selectorMatches(pod.NamespaceLabels, peer.NamespaceSelector) {
+		if !selectorMatches(combined, peer.NamespaceSelector) {
 			continue
 		}
 		for _, ip := range pod.IPs {
@@ -190,26 +251,27 @@ func selectorMatches(labels map[string]string, selector *LabelSelector) bool {
 		return true
 	}
 	for k, v := range selector.MatchLabels {
-		if labels[k] != v {
+		if labelValue(labels, k) != v {
 			return false
 		}
 	}
 	for _, expr := range selector.MatchExpressions {
+		value, ok := labelValueOK(labels, expr.Key)
 		switch expr.Operator {
 		case metav1.LabelSelectorOpIn:
-			if !containsString(expr.Values, labels[expr.Key]) {
+			if !ok || !containsString(expr.Values, value) {
 				return false
 			}
 		case metav1.LabelSelectorOpNotIn:
-			if containsString(expr.Values, labels[expr.Key]) {
+			if ok && containsString(expr.Values, value) {
 				return false
 			}
 		case metav1.LabelSelectorOpExists:
-			if _, ok := labels[expr.Key]; !ok {
+			if !ok {
 				return false
 			}
 		case metav1.LabelSelectorOpDoesNotExist:
-			if _, ok := labels[expr.Key]; ok {
+			if ok {
 				return false
 			}
 		default:
@@ -217,6 +279,49 @@ func selectorMatches(labels map[string]string, selector *LabelSelector) bool {
 		}
 	}
 	return true
+}
+
+func labelValue(labels map[string]string, key string) string {
+	value, _ := labelValueOK(labels, key)
+	return value
+}
+
+func labelValueOK(labels map[string]string, key string) (string, bool) {
+	if labels == nil {
+		return "", false
+	}
+	if value, ok := labels[key]; ok {
+		return value, true
+	}
+	if stripped, ok := stripLabelSourcePrefix(key); ok {
+		value, ok := labels[stripped]
+		return value, ok
+	}
+	return "", false
+}
+
+func stripLabelSourcePrefix(key string) (string, bool) {
+	source, remainder, ok := strings.Cut(key, ":")
+	if !ok {
+		return "", false
+	}
+	switch source {
+	case "k8s", "any", "reserved":
+		return remainder, true
+	default:
+		return "", false
+	}
+}
+
+func combinedPodLabels(pod Pod) map[string]string {
+	combined := make(map[string]string, len(pod.Labels)+len(pod.NamespaceLabels))
+	for k, v := range pod.Labels {
+		combined[k] = v
+	}
+	for k, v := range pod.NamespaceLabels {
+		combined[k] = v
+	}
+	return combined
 }
 
 func containsString(values []string, needle string) bool {
