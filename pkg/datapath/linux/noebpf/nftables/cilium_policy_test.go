@@ -410,6 +410,23 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 			want: "toServices are not supported in no-eBPF mode",
 		},
 		{
+			name: "authentication",
+			cnp: &ciliumv2.CiliumNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "auth", Namespace: "frontend"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Ingress: []policyapi.IngressRule{{
+						IngressCommonRule: policyapi.IngressCommonRule{
+							FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+						},
+						Authentication: &policyapi.Authentication{Mode: policyapi.AuthenticationModeRequired},
+						ToPorts:        []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "authentication is not supported in no-eBPF mode",
+		},
+		{
 			name: "from entities",
 			cnp: &ciliumv2.CiliumNetworkPolicy{
 				ObjectMeta: k8smetav1.ObjectMeta{Name: "entities", Namespace: "frontend"},
@@ -511,6 +528,23 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t
 				},
 			},
 			want: "toServices are not supported in no-eBPF mode",
+		},
+		{
+			name: "authentication",
+			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "auth"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Ingress: []policyapi.IngressRule{{
+						IngressCommonRule: policyapi.IngressCommonRule{
+							FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+						},
+						Authentication: &policyapi.Authentication{Mode: policyapi.AuthenticationModeRequired},
+						ToPorts:        []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "authentication is not supported in no-eBPF mode",
 		},
 	}
 
