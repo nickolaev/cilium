@@ -628,6 +628,26 @@ func TestControllerCNPReconciliationOnDelete(t *testing.T) {
 	require.Empty(t, c.cachedCNPs())
 }
 
+func TestControllerCNPReconciliationOnUpdateAndDelete(t *testing.T) {
+	c := &controller{
+		cnpCache: map[resource.Key]*ciliumv2.CiliumNetworkPolicy{},
+	}
+	key := resource.Key{Namespace: "default", Name: "p"}
+	initial := &ciliumv2.CiliumNetworkPolicy{ObjectMeta: k8smetav1.ObjectMeta{Name: "p", Namespace: "default"}}
+	updated := &ciliumv2.CiliumNetworkPolicy{ObjectMeta: k8smetav1.ObjectMeta{Name: "p", Namespace: "default", Labels: map[string]string{"version": "updated"}}}
+
+	c.handleCNPEvent(resource.Event[*ciliumv2.CiliumNetworkPolicy]{Kind: resource.Upsert, Key: key, Object: initial, Done: func(error) {}})
+	require.Len(t, c.cachedCNPs(), 1)
+	require.Equal(t, "p", c.cachedCNPs()[0].Name)
+
+	c.handleCNPEvent(resource.Event[*ciliumv2.CiliumNetworkPolicy]{Kind: resource.Upsert, Key: key, Object: updated, Done: func(error) {}})
+	require.Len(t, c.cachedCNPs(), 1)
+	require.Equal(t, "updated", c.cachedCNPs()[0].Labels["version"])
+
+	c.handleCNPEvent(resource.Event[*ciliumv2.CiliumNetworkPolicy]{Kind: resource.Delete, Key: key, Done: func(error) {}})
+	require.Empty(t, c.cachedCNPs())
+}
+
 func TestControllerCCNPReconciliationOnUpdateAndDelete(t *testing.T) {
 	c := &controller{
 		ccnpCache: map[resource.Key]*ciliumv2.CiliumClusterwideNetworkPolicy{},
