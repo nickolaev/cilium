@@ -562,6 +562,22 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t
 			},
 			want: "authentication is not supported in no-eBPF mode",
 		},
+		{
+			name: "to entities",
+			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "entities"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Egress: []policyapi.EgressRule{{
+						EgressCommonRule: policyapi.EgressCommonRule{
+							ToEntities: []policyapi.Entity{policyapi.EntityWorld},
+						},
+						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "toEntities are not supported in no-eBPF mode",
+		},
 	}
 
 	for _, tc := range testCases {
