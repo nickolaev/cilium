@@ -578,6 +578,22 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t
 			},
 			want: "toEntities are not supported in no-eBPF mode",
 		},
+		{
+			name: "from groups",
+			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "groups"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Ingress: []policyapi.IngressRule{{
+						IngressCommonRule: policyapi.IngressCommonRule{
+							FromGroups: []policyapi.Groups{{AWS: &policyapi.AWSGroup{Labels: map[string]string{"team": "blue"}}}},
+						},
+						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "fromGroups are not supported in no-eBPF mode",
+		},
 	}
 
 	for _, tc := range testCases {
