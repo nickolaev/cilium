@@ -354,6 +354,42 @@ func TestPoliciesFromCiliumNetworkPoliciesEgressCIDRSetExcept(t *testing.T) {
 	require.NotContains(t, script, "10.1.0.1")
 }
 
+func TestPoliciesFromCiliumNetworkPoliciesEgressCIDRDeny(t *testing.T) {
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "backend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.8.40"}}},
+	}
+	cnp := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "cidr-deny", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+			EgressDeny: []policyapi.EgressDenyRule{{
+				EgressCommonRule: policyapi.EgressCommonRule{
+					ToCIDRSet: []policyapi.CIDRRule{{
+						Cidr:        policyapi.CIDR("10.0.0.0/8"),
+						ExceptCIDRs: []policyapi.CIDR{"10.1.0.0/16"},
+					}},
+				},
+			}},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: client}},
+		[]*corev1.Pod{client},
+		[]k8sTables.Namespace{{Name: "backend"}},
+		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+	require.NotEmpty(t, policies[0].EgressDenyRules)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "counter drop")
+	require.NotContains(t, script, "10.1.0.1")
+}
+
 func TestPoliciesFromCiliumClusterwideNetworkPoliciesEgressCIDRSetExcept(t *testing.T) {
 	client := &corev1.Pod{
 		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "frontend", Labels: map[string]string{"app": "client"}},
@@ -387,6 +423,42 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesEgressCIDRSetExcept(t *test
 	script, err := Render(DesiredState{Policies: policies})
 	require.NoError(t, err)
 	require.Contains(t, script, "ip saddr 10.244.8.30/32")
+	require.NotContains(t, script, "10.1.0.1")
+}
+
+func TestPoliciesFromCiliumClusterwideNetworkPoliciesEgressCIDRDeny(t *testing.T) {
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "frontend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.8.50"}}},
+	}
+	ccnp := &ciliumv2.CiliumClusterwideNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "cidr-deny"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+			EgressDeny: []policyapi.EgressDenyRule{{
+				EgressCommonRule: policyapi.EgressCommonRule{
+					ToCIDRSet: []policyapi.CIDRRule{{
+						Cidr:        policyapi.CIDR("10.0.0.0/8"),
+						ExceptCIDRs: []policyapi.CIDR{"10.1.0.0/16"},
+					}},
+				},
+			}},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumClusterwideNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: client}},
+		[]*corev1.Pod{client},
+		[]k8sTables.Namespace{{Name: "frontend"}},
+		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+	require.NotEmpty(t, policies[0].EgressDenyRules)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "counter drop")
 	require.NotContains(t, script, "10.1.0.1")
 }
 
