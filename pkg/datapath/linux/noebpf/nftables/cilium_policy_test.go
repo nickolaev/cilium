@@ -459,6 +459,22 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 			want: "fromGroups are not supported in no-eBPF mode",
 		},
 		{
+			name: "to entities",
+			cnp: &ciliumv2.CiliumNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "to-entities", Namespace: "frontend"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Egress: []policyapi.EgressRule{{
+						EgressCommonRule: policyapi.EgressCommonRule{
+							ToEntities: []policyapi.Entity{policyapi.EntityWorld},
+						},
+						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "toEntities are not supported in no-eBPF mode",
+		},
+		{
 			name: "to groups",
 			cnp: &ciliumv2.CiliumNetworkPolicy{
 				ObjectMeta: k8smetav1.ObjectMeta{Name: "egress-groups", Namespace: "frontend"},
