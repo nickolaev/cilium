@@ -472,6 +472,61 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 	}
 }
 
+func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t *testing.T) {
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "frontend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.3.21"}}},
+	}
+
+	testCases := []struct {
+		name string
+		ccnp *ciliumv2.CiliumClusterwideNetworkPolicy
+		want string
+	}{
+		{
+			name: "icmp egress",
+			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "icmp-egress"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Egress: []policyapi.EgressRule{{
+						ICMPs: policyapi.ICMPRules{{Fields: []policyapi.ICMPField{{}}}},
+					}},
+				},
+			},
+			want: "ICMP policy is not supported in no-eBPF mode",
+		},
+		{
+			name: "to services",
+			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "services"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Egress: []policyapi.EgressRule{{
+						EgressCommonRule: policyapi.EgressCommonRule{
+							ToServices: []policyapi.Service{{K8sService: &policyapi.K8sServiceNamespace{ServiceName: "svc"}}},
+						},
+						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "toServices are not supported in no-eBPF mode",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := PoliciesFromCiliumClusterwideNetworkPolicies(
+				[]k8sTables.LocalPod{{Pod: client}},
+				[]*corev1.Pod{client},
+				[]k8sTables.Namespace{{Name: "frontend"}},
+				[]*ciliumv2.CiliumClusterwideNetworkPolicy{tc.ccnp},
+			)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
 func TestPoliciesFromCiliumNetworkPoliciesNamespaceBoundary(t *testing.T) {
 	server := &corev1.Pod{
 		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
