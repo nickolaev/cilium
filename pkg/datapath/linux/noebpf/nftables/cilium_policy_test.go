@@ -390,6 +390,71 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesEgressCIDRSetExcept(t *test
 	require.NotContains(t, script, "10.1.0.1")
 }
 
+func TestPoliciesFromCiliumClusterwideNetworkPoliciesMatchExpressions(t *testing.T) {
+	server := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.10"}}},
+	}
+	existsClient := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client-a", Namespace: "frontend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.20"}}},
+	}
+	otherClient := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client-b", Namespace: "other", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.30"}}},
+	}
+
+	ccnp := &ciliumv2.CiliumClusterwideNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "match-expressions"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}},
+			Ingress: []policyapi.IngressRule{
+				{
+					IngressCommonRule: policyapi.IngressCommonRule{
+						FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "client"},
+							MatchExpressions: []slimmetav1.LabelSelectorRequirement{{
+								Key:      "io.cilium.k8s.namespace.labels.team",
+								Operator: slimmetav1.LabelSelectorOpExists,
+							}},
+						}}},
+					},
+					ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+				},
+				{
+					IngressCommonRule: policyapi.IngressCommonRule{
+						FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "client"},
+							MatchExpressions: []slimmetav1.LabelSelectorRequirement{{
+								Key:      "io.cilium.k8s.namespace.labels.team",
+								Operator: slimmetav1.LabelSelectorOpNotIn,
+								Values:   []string{"green"},
+							}},
+						}}},
+					},
+					ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "9090", Protocol: policyapi.ProtoTCP}}}},
+				},
+			},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumClusterwideNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: server}},
+		[]*corev1.Pod{server, existsClient, otherClient},
+		[]k8sTables.Namespace{{Name: "backend", Labels: map[string]string{"team": "blue"}}, {Name: "frontend", Labels: map[string]string{"team": "blue"}}, {Name: "other", Labels: map[string]string{"team": "red"}}},
+		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "ip saddr 10.244.9.20/32 ip daddr 10.244.9.10/32 tcp dport 8080 counter accept")
+	require.Contains(t, script, "ip saddr 10.244.9.20/32 ip daddr 10.244.9.10/32 tcp dport 9090 counter accept")
+	require.Contains(t, script, "ip saddr 10.244.9.30/32 ip daddr 10.244.9.10/32 tcp dport 8080 counter accept")
+	require.Contains(t, script, "ip saddr 10.244.9.30/32 ip daddr 10.244.9.10/32 tcp dport 9090 counter accept")
+}
+
 func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T) {
 	client := &corev1.Pod{
 		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "frontend", Labels: map[string]string{"app": "client"}},
