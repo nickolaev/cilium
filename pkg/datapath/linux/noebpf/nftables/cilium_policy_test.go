@@ -635,6 +635,22 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t
 			want: "authentication is not supported in no-eBPF mode",
 		},
 		{
+			name: "node selector",
+			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "nodes"},
+				Spec: &policyapi.Rule{
+					NodeSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"node-role.kubernetes.io/control-plane": ""}}},
+					Ingress: []policyapi.IngressRule{{
+						IngressCommonRule: policyapi.IngressCommonRule{
+							FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+						},
+						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "node selector is not supported in no-eBPF mode",
+		},
+		{
 			name: "to entities",
 			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
 				ObjectMeta: k8smetav1.ObjectMeta{Name: "entities"},
