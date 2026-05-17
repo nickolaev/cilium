@@ -67,5 +67,9 @@ Passed:
 ## Result
 
 Phase 7 is complete. The M1 support boundary is now tested rather than merely
-documented. Next phase: Phase 8 upstream readiness / PR slicing, while deferred
+documented. Next phase: Phase 8 branch stabilization / integration, while deferred
 Phase 4 polish remains Phase 9.
+
+Phase 8 planning artifact:
+
+- `.omx/specs/noebpf-phase8-upstream-readiness-plan.md`

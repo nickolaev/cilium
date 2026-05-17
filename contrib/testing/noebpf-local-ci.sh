@@ -143,7 +143,7 @@ else
   log "helm not found; skipping no-eBPF Helm render gate"
 fi
 
-run go test ./pkg/datapath/connector ./pkg/datapath/loader ./pkg/datapath/linux/noebpf/... ./pkg/status ./pkg/client
+run go test ./pkg/datapath/connector ./pkg/datapath/loader ./pkg/datapath/linux/noebpf/... ./pkg/loadbalancer/healthserver ./pkg/loadbalancer/reflectors ./pkg/status ./pkg/client
 
 if [[ "$NOEBPF_RUN_BROAD_GO" == "1" ]]; then
   run go test ./pkg/datapath/... ./pkg/loadbalancer/... ./pkg/service/... ./pkg/k8s/watchers/...

@@ -15,19 +15,19 @@ Cilium feature-support claim and it is not a Kubernetes conformance statement.
    quickstart
    phase0-nftables-spike
 
-M1 support matrix
------------------
+No-eBPF support matrix
+----------------------
 
-The supported M1 profile is a dual-stack kind cluster with kube-proxy disabled,
-installed from ``contrib/testing/kind-no-ebpf-dual.yaml`` and optionally layered
-with ``contrib/testing/kind-no-ebpf-dual-policy.yaml``.
+The supported no-eBPF profile is a dual-stack kind cluster with kube-proxy
+disabled, installed from ``contrib/testing/kind-no-ebpf-dual.yaml`` and
+optionally layered with ``contrib/testing/kind-no-ebpf-dual-policy.yaml``.
 
 .. list-table::
    :header-rows: 1
    :widths: 28 18 54
 
    * - Area
-     - M1 status
+     - Status
      - Notes
    * - Pod networking
      - Supported
@@ -39,40 +39,47 @@ with ``contrib/testing/kind-no-ebpf-dual-policy.yaml``.
        host, or native devices.
    * - ClusterIP Services
      - Supported subset
-     - TCP/UDP, IPv4 and IPv6, multiple backends, EndpointSlice updates, and
-       deletion cleanup through the nftables backend.
+     - TCP/UDP/SCTP, IPv4 and IPv6, multiple backends, EndpointSlice updates,
+       and deletion cleanup through the nftables backend.
    * - NodePort Services
      - Supported subset
-     - Basic wildcard NodePort TCP/UDP for IPv4 and IPv6. Advanced traffic-policy
-       semantics are out of scope.
+     - Basic wildcard NodePort TCP/UDP/SCTP for IPv4 and IPv6. Advanced
+       traffic-policy semantics remain out of scope.
    * - CoreDNS Service
      - Supported
      - Validated through the no-eBPF Service backend in the dual-stack profile.
    * - Kubernetes NetworkPolicy
      - Supported subset
      - Standard K8s NetworkPolicy ingress/egress default deny, pod and namespace
-       selectors, combined selectors, ``ipBlock`` with ``except``, and TCP/UDP
-       ports.
+       selectors, combined selectors, ``matchExpressions``, named ports,
+       ``endPort``, ``ipBlock`` with ``except``, and TCP/UDP/SCTP ports.
    * - Cilium policy extensions
      - Unsupported
      - CiliumNetworkPolicy, L7, DNS/FQDN, entities, and identity-aware Cilium
        semantics remain outside this backend.
    * - LoadBalancer / ExternalIP Services
-     - Unsupported
-     - Deferred together with topology hints, session affinity, source ranges,
-       health checks, traffic policies, and full kube-proxy parity.
+     - Supported subset
+     - Frontends are translated through nftables for IPv4 and IPv6, including
+       source-range filtering, session affinity, healthCheckNodePort,
+       LocalRedirect, multiple backends, and topology-aware hints inherited
+       from the loadbalancer writer when service topology is enabled. Full
+       kube-proxy parity remains deferred.
+   * - CiliumLocalRedirectPolicy
+     - Supported subset
+     - Redirect policies can create ``LocalRedirect`` frontends and pseudo-
+       services backed by local pods when ``localRedirectPolicy`` is enabled.
    * - eBPF-dependent features
      - Unsupported
      - BPF masquerade, socket LB, host firewall, Hubble datapath flow events,
        transparent encryption, XDP acceleration, bandwidth manager, and egress
-       gateway are not part of M1.
+       gateway are not part of the supported no-eBPF branch scope.
 
 Validation gates
 ----------------
 
-Use ``contrib/testing/noebpf-local-ci.sh`` as the local Phase 4 gate. The script
-runs hygiene checks, focused Go tests, status waits, Service and NetworkPolicy
-smokes, and the targeted Cilium connectivity scenarios that match the support
-matrix above. Broader connectivity or Sonobuoy runs can be useful signals, but
-failures in features outside this matrix should be triaged as follow-up product
-work rather than silently expanding M1.
+Use ``contrib/testing/noebpf-local-ci.sh`` as the local no-eBPF gate. The
+script runs hygiene checks, focused Go tests, status waits, Service and
+NetworkPolicy smokes, and the targeted Cilium connectivity scenarios that match
+the support matrix above. Broader connectivity or Sonobuoy runs can be useful
+signals, but failures in features outside this matrix should be triaged as
+follow-up product work rather than silently expanding the support scope.

@@ -102,5 +102,5 @@ Passed:
 ## Remaining follow-up
 
 - Phase 7: decide whether to expand Service or KNP feature scope.
-- Phase 8: upstream readiness / PR slicing.
+- Phase 8: branch stabilization / integration.
 - Phase 9: remaining product UX/docs/CI polish deferred from Phase 4.

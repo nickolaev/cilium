@@ -852,8 +852,9 @@ contributors across the globe, there is almost always someone available to help.
 | nat46x64Gateway | object | `{"enabled":false}` | Configure standalone NAT46/NAT64 gateway |
 | nat46x64Gateway.enabled | bool | `false` | Enable RFC6052-prefixed translation |
 | noEBPF | object | `{"networkPolicy":{"enabled":false},"services":{"enabled":false}}` | Experimental no-eBPF Linux-rule backends used with bpf.datapathMode=linux-route. |
-| noEBPF.networkPolicy.enabled | bool | `false` | Enable experimental nftables Kubernetes NetworkPolicy enforcement for linux-route mode. |
-| noEBPF.services.enabled | bool | `false` | Enable experimental nftables Service replacement for linux-route mode. |
+| noEBPF.networkPolicy.enabled | bool | `false` | Enable experimental nftables Kubernetes NetworkPolicy enforcement for linux-route mode, including matchExpressions, named ports, endPort, and SCTP support in the supported subset. |
+| noEBPF.services.enabled | bool | `false` | Enable experimental nftables Service replacement for linux-route mode, including ClusterIP, NodePort, LoadBalancer, ExternalIPs, LocalRedirect, SCTP, source-range filtering, session affinity, healthCheckNodePort, and topology-aware hints in the supported subset. |
+| localRedirectPolicy | bool | `false` | Enable Local Redirect Policy (deprecated, please use `localRedirectPolicies.enabled` instead). The no-eBPF branch can use this for `LocalRedirect` pseudo-services backed by local pods. |
 | nodeIPAM.enabled | bool | `false` | Configure Node IPAM ref: https://docs.cilium.io/en/stable/network/node-ipam/ |
 | nodePort | object | `{"addresses":null,"autoProtectPortRange":true,"bindProtection":true,"enableDynamicSourceLookup":false,"enableHealthCheck":true,"enableHealthCheckLoadBalancerIP":false}` | Configure N-S k8s service loadbalancing |
 | nodePort.addresses | string | `nil` | List of CIDRs for choosing which IP addresses assigned to native devices are used for NodePort load-balancing. By default this is empty and the first suitable, preferably private, IPv4 and IPv6 address assigned to each device is used.  Example:    addresses: ["192.168.1.0/24", "2001::/64"]  |
