@@ -4,6 +4,7 @@
 package nftables
 
 import (
+	"strings"
 	"testing"
 
 	intstr "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/util/intstr"
@@ -174,4 +175,62 @@ func TestDesiredStateMixesKNPAndCiliumPolicies(t *testing.T) {
 	require.Contains(t, script, "ip saddr 10.244.11.40/32 ip daddr 10.244.11.10/32 tcp dport 8080 counter accept")
 	require.Contains(t, script, "ip saddr 10.244.11.50/32 ip daddr 10.244.11.20/32 tcp dport 9090 counter accept")
 	require.Contains(t, script, "ip saddr 10.244.11.50/32 ip daddr 10.244.11.30/32 tcp dport 7070 counter accept")
+}
+
+func TestDesiredStatePrefersCiliumDenyOverKNPAllow(t *testing.T) {
+	server := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.12.10"}}},
+	}
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "backend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.12.20"}}},
+	}
+	port8080 := intstr.FromInt32(8080)
+	tcp := corev1.ProtocolTCP
+
+	knp := &networkingv1.NetworkPolicy{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "allow-client", Namespace: "backend"},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From:  []networkingv1.NetworkPolicyPeer{{PodSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+				Ports: []networkingv1.NetworkPolicyPort{{Port: &port8080, Protocol: &tcp}},
+			}},
+		},
+	}
+	cnp := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "deny-client", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}},
+			IngressDeny: []policyapi.IngressDenyRule{{
+				IngressCommonRule: policyapi.IngressCommonRule{
+					FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+				},
+				ToPorts: []policyapi.PortDenyRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+			}},
+		},
+	}
+
+	state, err := desiredState(
+		nil,
+		[]k8sTables.LocalPod{{Pod: server}},
+		[]*corev1.Pod{server, client},
+		[]k8sTables.Namespace{{Name: "backend"}},
+		[]*networkingv1.NetworkPolicy{knp},
+		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+		nil,
+		false,
+		true,
+	)
+	require.NoError(t, err)
+	require.Len(t, state.Policies, 2)
+
+	script, err := Render(state)
+	require.NoError(t, err)
+	denyIdx := strings.Index(script, "ip saddr 10.244.12.20/32 ip daddr 10.244.12.10/32 tcp dport 8080 counter drop")
+	allowIdx := strings.Index(script, "ip saddr 10.244.12.20/32 ip daddr 10.244.12.10/32 tcp dport 8080 counter accept")
+	require.NotEqual(t, -1, denyIdx, script)
+	require.NotEqual(t, -1, allowIdx, script)
+	require.Less(t, denyIdx, allowIdx, script)
 }
