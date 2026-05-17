@@ -414,19 +414,10 @@ func (d *statusCollector) getNoEBPFAnnotations() []string {
 		return nil
 	}
 
-	annotations := []string{"No-eBPF datapath: linux-route (experimental)"}
-	if d.statusParams.DaemonConfig.EnableNoEBPFServices {
-		annotations = append(annotations, "No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort/LoadBalancer/ExternalIPs/LocalRedirect TCP/UDP/SCTP subset, source-range filtering, session affinity, healthCheckNodePort, traffic-policy local, topology-aware hints, LocalRedirectPolicy)")
-	} else {
-		annotations = append(annotations, "No-eBPF Service replacement: disabled")
-	}
-	if d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy {
-		annotations = append(annotations, "No-eBPF Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors, matchExpressions, named ports, endPort, ipBlock except, and TCP/UDP/SCTP subset)")
-	} else {
-		annotations = append(annotations, "No-eBPF Kubernetes NetworkPolicy: disabled")
-	}
-	annotations = append(annotations, "No-eBPF unsupported: CiliumNetworkPolicy/L7/FQDN/entities, host firewall, BPF masquerade, transparent encryption, XDP acceleration, bandwidth manager, egress gateway")
-	return annotations
+	return noebpfcap.CurrentAnnotations(
+		d.statusParams.DaemonConfig.EnableNoEBPFServices,
+		d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy,
+	)
 }
 
 func (d *statusCollector) getBPFMapStatus() *models.BPFMapStatus {

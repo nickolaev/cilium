@@ -15,7 +15,9 @@ profile:
 * ``linux-route`` pod attachment/routing;
 * nftables-owned ``inet cilium_noebpf`` table;
 * Service replacement for ClusterIP, NodePort, LoadBalancer, ExternalIP, and
-  LocalRedirect traffic within the supported subset;
+  LocalRedirect traffic within the supported subset, plus CoreDNS lookup,
+  source-range filtering, session affinity, healthCheckNodePort, traffic
+  policy Local, and topology-aware hints;
 * Kubernetes NetworkPolicy enforcement for namespace/pod selectors,
   ``matchExpressions``, named ports, ``endPort``, ``ipBlock`` with ``except``,
   and TCP/UDP/SCTP port rules;
@@ -24,9 +26,10 @@ profile:
 Out of scope until explicitly added to the support matrix:
 
 * full kube-proxy parity beyond the current Service subset;
-* CiliumNetworkPolicy, L7 policy, FQDN policy, host firewall, Hubble datapath
-  events, transparent encryption, bandwidth manager, BPF masquerade, and other
-  eBPF-dependent datapath features.
+* CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy, L7 policy, FQDN policy,
+  entity-based policy, host firewall, Hubble datapath events, transparent
+  encryption, bandwidth manager, BPF masquerade, egress gateway, XDP
+  acceleration, and other eBPF-dependent datapath features.
 
 Cluster setup
 -------------

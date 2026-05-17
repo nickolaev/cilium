@@ -45,12 +45,15 @@ func TestGetNoEBPFAnnotations(t *testing.T) {
 	}
 	joined := strings.Join(annotations, "\n")
 	for _, want := range []string{
-		"LoadBalancer/ExternalIPs/LocalRedirect",
-		"LocalRedirectPolicy",
-		"topology-aware hints",
-		"healthCheckNodePort",
-		"matchExpressions",
-		"CiliumNetworkPolicy/L7/FQDN/entities",
+		"service backend: enabled",
+		"network-policy backend: enabled",
+		"Pod networking: supported",
+		"Endpoint routes: supported",
+		"ClusterIP Services: supported-subset",
+		"LocalRedirectPolicy: supported-subset",
+		"Kubernetes NetworkPolicy: supported-subset",
+		"NetworkPolicy named ports and endPort: supported-subset",
+		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy: unsupported",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected annotations to include %q, got:\n%s", want, joined)

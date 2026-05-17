@@ -51,10 +51,11 @@ func TestNumReadyClusters(t *testing.T) {
 
 func TestFormStatusResponse(t *testing.T) {
 	testCases := []struct {
-		name     string
-		sr       *models.StatusResponse
-		sd       StatusDetails
-		expected string
+		name             string
+		sr               *models.StatusResponse
+		sd               StatusDetails
+		expected         string
+		expectedContains []string
 	}{
 		{
 			name:     "empty output",
@@ -112,21 +113,37 @@ func TestFormStatusResponse(t *testing.T) {
 					Features: &models.KubeProxyReplacementFeatures{
 						Annotations: []string{
 							"No-eBPF datapath: linux-route (experimental)",
-							"No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort/LoadBalancer/ExternalIPs/LocalRedirect TCP/UDP/SCTP subset, source-range filtering, session affinity, healthCheckNodePort, traffic-policy local, topology-aware hints, LocalRedirectPolicy)",
-							"No-eBPF Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors, matchExpressions, named ports, endPort, ipBlock except, and TCP/UDP/SCTP subset)",
-							"No-eBPF unsupported: CiliumNetworkPolicy/L7/FQDN/entities, host firewall, BPF masquerade, transparent encryption, XDP acceleration, bandwidth manager, egress gateway",
+							"No-eBPF service backend: enabled",
+							"No-eBPF network-policy backend: enabled",
+							"No-eBPF Pod networking: supported (linux-route pod attachment and IPv4/IPv6 pod reachability)",
+							"No-eBPF ClusterIP Services: supported-subset (IPv4/IPv6 VIP DNAT for TCP/UDP/SCTP services)",
+							"No-eBPF LocalRedirectPolicy: supported-subset (local redirect frontends and pseudo-services backed by local pods)",
+							"No-eBPF Kubernetes NetworkPolicy: supported-subset (standard ingress/egress default deny)",
+							"No-eBPF CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy: unsupported (custom Cilium policy CRDs remain out of scope)",
 							"io.cilium/lb-algorithm",
 						},
 					},
 				},
 			},
-			sd:       StatusDetails{},
-			expected: "KubeProxyReplacement:\t\t\nNo-eBPF:\tdatapath: linux-route (experimental); Service replacement: nftables enabled (ClusterIP/NodePort/LoadBalancer/ExternalIPs/LocalRedirect TCP/UDP/SCTP subset, source-range filtering, session affinity, healthCheckNodePort, traffic-policy local, topology-aware hints, LocalRedirectPolicy); Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors, matchExpressions, named ports, endPort, ipBlock except, and TCP/UDP/SCTP subset); unsupported: CiliumNetworkPolicy/L7/FQDN/entities, host firewall, BPF masquerade, transparent encryption, XDP acceleration, bandwidth manager, egress gateway\n",
+			sd: StatusDetails{},
+			expectedContains: []string{
+				"KubeProxyReplacement:\t\t",
+				"No-eBPF:\tdatapath: linux-route (experimental); service backend: enabled; network-policy backend: enabled; Pod networking: supported (linux-route pod attachment and IPv4/IPv6 pod reachability)",
+				"ClusterIP Services: supported-subset (IPv4/IPv6 VIP DNAT for TCP/UDP/SCTP services)",
+				"LocalRedirectPolicy: supported-subset (local redirect frontends and pseudo-services backed by local pods)",
+				"Kubernetes NetworkPolicy: supported-subset (standard ingress/egress default deny)",
+				"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy: unsupported (custom Cilium policy CRDs remain out of scope)",
+			},
 		},
 	}
 	for _, tc := range testCases {
 		var b bytes.Buffer
 		FormatStatusResponse(&b, tc.sr, tc.sd)
-		assert.Contains(t, b.String(), tc.expected)
+		if tc.expected != "" {
+			assert.Contains(t, b.String(), tc.expected)
+		}
+		for _, want := range tc.expectedContains {
+			assert.Contains(t, b.String(), want)
+		}
 	}
 }

@@ -31,43 +31,47 @@ optionally layered with ``contrib/testing/kind-no-ebpf-dual-policy.yaml``.
      - Notes
    * - Pod networking
      - Supported
-     - ``linux-route`` pod attachment, native routing, endpoint routes, IPv4 and
-       IPv6 pod connectivity.
+     - ``linux-route`` pod attachment, native routing, endpoint routes, and
+       IPv4/IPv6 pod connectivity.
    * - Cilium TC/XDP forwarding programs
      - Unsupported
      - The no-eBPF path must not attach Cilium forwarding programs to workload,
        host, or native devices.
+   * - Cilium-owned nftables table lifecycle
+     - Supported
+     - Startup cleanup and atomic replacement of ``inet cilium_noebpf``.
    * - ClusterIP Services
      - Supported subset
      - TCP/UDP/SCTP, IPv4 and IPv6, multiple backends, EndpointSlice updates,
-       and deletion cleanup through the nftables backend.
-   * - NodePort Services
-     - Supported subset
-     - Basic wildcard NodePort TCP/UDP/SCTP for IPv4 and IPv6. Advanced
-       traffic-policy semantics remain out of scope.
+       deletion cleanup, and CoreDNS lookup through the nftables backend.
    * - CoreDNS Service
      - Supported
-     - Validated through the no-eBPF Service backend in the dual-stack profile.
-   * - Kubernetes NetworkPolicy
+     - Validated as a ClusterIP UDP lookup in the dual-stack profile.
+   * - NodePort Services
      - Supported subset
-     - Standard K8s NetworkPolicy ingress/egress default deny, pod and namespace
-       selectors, combined selectors, ``matchExpressions``, named ports,
-       ``endPort``, ``ipBlock`` with ``except``, and TCP/UDP/SCTP ports.
-   * - Cilium policy extensions
-     - Unsupported
-     - CiliumNetworkPolicy, L7, DNS/FQDN, entities, and identity-aware Cilium
-       semantics remain outside this backend.
+     - Basic wildcard NodePort TCP/UDP/SCTP for IPv4 and IPv6, including
+       session affinity on the supported subset.
    * - LoadBalancer / ExternalIP Services
      - Supported subset
      - Frontends are translated through nftables for IPv4 and IPv6, including
-       source-range filtering, session affinity, healthCheckNodePort,
-       LocalRedirect, multiple backends, and topology-aware hints inherited
-       from the loadbalancer writer when service topology is enabled. Full
-       kube-proxy parity remains deferred.
-   * - CiliumLocalRedirectPolicy
+       source-range filtering, session affinity, healthCheckNodePort, traffic
+       policy Local, and topology-aware backend selection. Full kube-proxy
+       parity remains deferred.
+   * - LocalRedirectPolicy
      - Supported subset
-     - Redirect policies can create ``LocalRedirect`` frontends and pseudo-
-       services backed by local pods when ``localRedirectPolicy`` is enabled.
+     - Redirect policies can create ``LocalRedirect`` frontends and
+       pseudo-services backed by local pods when ``localRedirectPolicy`` is
+       enabled.
+   * - Kubernetes NetworkPolicy
+     - Supported subset
+     - Standard K8s NetworkPolicy ingress/egress default deny, pod and
+       namespace selectors, combined selectors, ``matchExpressions``, named
+       ports, ``endPort``, ``ipBlock`` with ``except``, and TCP/UDP/SCTP
+       ports.
+   * - Cilium policy extensions
+     - Unsupported
+     - CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy, L7, DNS/FQDN, and
+       identity-aware Cilium semantics remain outside this backend.
    * - eBPF-dependent features
      - Unsupported
      - BPF masquerade, socket LB, host firewall, Hubble datapath flow events,
