@@ -53,7 +53,8 @@ func TestGetNoEBPFAnnotations(t *testing.T) {
 		"LocalRedirectPolicy: supported-subset",
 		"Kubernetes NetworkPolicy: supported-subset",
 		"NetworkPolicy named ports and endPort: supported-subset",
-		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy: unsupported",
+		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy: supported-subset",
+		"Cilium deny policies: supported-subset",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected annotations to include %q, got:\n%s", want, joined)

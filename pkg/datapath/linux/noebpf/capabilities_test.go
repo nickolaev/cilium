@@ -19,7 +19,8 @@ func TestCurrentCapabilities(t *testing.T) {
 		"LocalRedirectPolicy":                   SupportLevelSupportedSubset,
 		"Kubernetes NetworkPolicy":              SupportLevelSupportedSubset,
 		"NetworkPolicy named ports and endPort": SupportLevelSupportedSubset,
-		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy": SupportLevelUnsupported,
+		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy": SupportLevelSupportedSubset,
+		"Cilium deny policies":                                 SupportLevelSupportedSubset,
 		"Hubble datapath flow events":                          SupportLevelUnsupported,
 	}
 	for name, want := range mustHave {

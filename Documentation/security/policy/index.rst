@@ -16,6 +16,62 @@ in Cilium. For a basic understanding, read the :ref:`introduction <policy_guide>
 More details are covered on the respective pages for different kinds of policies
 and ways to define them.
 
+Policy support matrix
+---------------------
+
+The table below summarizes the main policy families documented in Cilium and
+their current status in the no-eBPF / linux-route branch.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 16 14 44
+
+   * - Policy family
+     - Native Cilium scope
+     - no-eBPF now
+     - Notes
+   * - Kubernetes ``NetworkPolicy``
+     - Standard allow policy
+     - Yes
+     - Implemented as a subset: ingress / egress default-deny, selectors,
+       ``matchExpressions``, named ports, ``endPort``, ``ipBlock`` / ``except``,
+       and TCP / UDP / SCTP policy ports.
+   * - ``CiliumNetworkPolicy``
+     - Namespace-scoped Cilium CRD
+     - Partial
+     - L3 / L4 allow rules, selector matching, namespace labels, named ports,
+       ``endPort``, and ``ipBlock`` / ``except`` are supported. Rich Cilium
+       identity-aware semantics, L7 rules, DNS rules, and Cilium-only selectors
+       remain out of scope.
+   * - ``CiliumClusterwideNetworkPolicy``
+     - Cluster-scoped Cilium CRD
+     - Partial
+     - Same supported subset as ``CiliumNetworkPolicy`` with cluster-wide
+       scope. Host policies are still unsupported.
+   * - Deny policies
+     - Explicit deny rules that override allow rules
+     - Partial
+     - L3 / L4 ingressDeny / egressDeny rules are supported and evaluated
+       before allow rules.
+   * - Host policies
+     - ``CiliumClusterwideNetworkPolicy`` with ``NodeSelector``
+     - No
+     - Requires host-firewall behavior and node-level enforcement that the
+       no-eBPF branch does not provide.
+   * - Layer 7 HTTP / Kafka policy
+     - Proxy-enforced application policy
+     - No
+     - Requires protocol-aware proxying rather than packet-only translation.
+   * - Layer 7 DNS policy / ``toFQDNs``
+     - DNS proxy plus IP discovery
+     - No
+     - Would require DNS interception, DNS policy evaluation, and DNS cache
+       integration in addition to nftables rules.
+   * - ``CiliumLocalRedirectPolicy``
+     - Local redirect / pseudo-service behavior
+     - Yes
+     - Implemented in the current no-eBPF backend.
+
 Security policies can be specified and imported via the following mechanisms:
 
 * Using Kubernetes `NetworkPolicy`, `CiliumNetworkPolicy` and `CiliumClusterwideNetworkPolicy`
