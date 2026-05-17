@@ -37,6 +37,9 @@ type StatusResponse struct {
 	// Status of Cilium daemon
 	Cilium *Status `json:"cilium,omitempty"`
 
+	// Status of the no-eBPF support matrix and runtime mode
+	NoEBPF *NoEBPFStatus `json:"no-ebpf,omitempty"`
+
 	// When supported by the API, this client ID should be used by the
 	// client when making another request to the server.
 	// See for example "/cluster/nodes".
@@ -147,6 +150,10 @@ func (m *StatusResponse) Validate(formats strfmt.Registry) error {
 	}
 
 	if err := m.validateClockSource(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateNoEBPF(formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -406,6 +413,29 @@ func (m *StatusResponse) validateCluster(formats strfmt.Registry) error {
 			ce := new(errors.CompositeError)
 			if stderrors.As(err, &ce) {
 				return ce.ValidateName("cluster")
+			}
+
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *StatusResponse) validateNoEBPF(formats strfmt.Registry) error {
+	if swag.IsZero(m.NoEBPF) { // not required
+		return nil
+	}
+
+	if m.NoEBPF != nil {
+		if err := m.NoEBPF.Validate(formats); err != nil {
+			ve := new(errors.Validation)
+			if stderrors.As(err, &ve) {
+				return ve.ValidateName("no-ebpf")
+			}
+			ce := new(errors.CompositeError)
+			if stderrors.As(err, &ce) {
+				return ce.ValidateName("no-ebpf")
 			}
 
 			return err
@@ -986,6 +1016,10 @@ func (m *StatusResponse) ContextValidate(ctx context.Context, formats strfmt.Reg
 		res = append(res, err)
 	}
 
+	if err := m.contextValidateNoEBPF(ctx, formats); err != nil {
+		res = append(res, err)
+	}
+
 	if err := m.contextValidateClusterMesh(ctx, formats); err != nil {
 		res = append(res, err)
 	}
@@ -1247,6 +1281,29 @@ func (m *StatusResponse) contextValidateCluster(ctx context.Context, formats str
 			ce := new(errors.CompositeError)
 			if stderrors.As(err, &ce) {
 				return ce.ValidateName("cluster")
+			}
+
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *StatusResponse) contextValidateNoEBPF(ctx context.Context, formats strfmt.Registry) error {
+	if m.NoEBPF != nil {
+		if swag.IsZero(m.NoEBPF) { // not required
+			return nil
+		}
+
+		if err := m.NoEBPF.ContextValidate(ctx, formats); err != nil {
+			ve := new(errors.Validation)
+			if stderrors.As(err, &ve) {
+				return ve.ValidateName("no-ebpf")
+			}
+			ce := new(errors.CompositeError)
+			if stderrors.As(err, &ce) {
+				return ce.ValidateName("no-ebpf")
 			}
 
 			return err

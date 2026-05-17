@@ -17,6 +17,7 @@ import (
 	"github.com/cilium/cilium/pkg/annotation"
 	"github.com/cilium/cilium/pkg/backoff"
 	"github.com/cilium/cilium/pkg/controller"
+	noebpfcap "github.com/cilium/cilium/pkg/datapath/linux/noebpf"
 	"github.com/cilium/cilium/pkg/datapath/linux/probes"
 	datapathOption "github.com/cilium/cilium/pkg/datapath/option"
 	datapathTables "github.com/cilium/cilium/pkg/datapath/tables"
@@ -415,16 +416,16 @@ func (d *statusCollector) getNoEBPFAnnotations() []string {
 
 	annotations := []string{"No-eBPF datapath: linux-route (experimental)"}
 	if d.statusParams.DaemonConfig.EnableNoEBPFServices {
-		annotations = append(annotations, "No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort TCP/UDP M1 subset)")
+		annotations = append(annotations, "No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort/LoadBalancer/ExternalIPs/LocalRedirect TCP/UDP/SCTP subset, source-range filtering, session affinity, healthCheckNodePort, traffic-policy local, topology-aware hints, LocalRedirectPolicy)")
 	} else {
 		annotations = append(annotations, "No-eBPF Service replacement: disabled")
 	}
 	if d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy {
-		annotations = append(annotations, "No-eBPF Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors and TCP/UDP ports M1 subset)")
+		annotations = append(annotations, "No-eBPF Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors, matchExpressions, named ports, endPort, ipBlock except, and TCP/UDP/SCTP subset)")
 	} else {
 		annotations = append(annotations, "No-eBPF Kubernetes NetworkPolicy: disabled")
 	}
-	annotations = append(annotations, "No-eBPF unsupported in M1: LoadBalancer, ExternalIPs, session affinity, traffic policies, L7/FQDN/CiliumNetworkPolicy, host firewall, BPF masquerade")
+	annotations = append(annotations, "No-eBPF unsupported: CiliumNetworkPolicy/L7/FQDN/entities, host firewall, BPF masquerade, transparent encryption, XDP acceleration, bandwidth manager, egress gateway")
 	return annotations
 }
 
@@ -622,6 +623,7 @@ func (d *statusCollector) GetStatus(brief bool, requireK8sConnectivity bool) mod
 	}
 
 	sr.Stale = stale
+	sr.NoEBPF = d.getNoEBPFStatus()
 
 	// CiliumVersion definition
 	ver := version.GetCiliumVersion()
@@ -676,6 +678,27 @@ func (d *statusCollector) GetStatus(brief bool, requireK8sConnectivity bool) mod
 	}
 
 	return sr
+}
+
+func (d *statusCollector) getNoEBPFStatus() *models.NoEBPFStatus {
+	caps := noebpfcap.CurrentCapabilities()
+	if !d.statusParams.DaemonConfig.EnableNoEBPFServices && !d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy && len(caps) == 0 {
+		return &models.NoEBPFStatus{}
+	}
+	modelCaps := make([]models.NoEBPFCapability, 0, len(caps))
+	for _, cap := range caps {
+		modelCaps = append(modelCaps, models.NoEBPFCapability{
+			Name:  cap.Name,
+			Level: string(cap.Level),
+			Notes: cap.Notes,
+		})
+	}
+	return &models.NoEBPFStatus{
+		Enabled:              d.statusParams.DaemonConfig.EnableNoEBPFServices || d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy,
+		ServicesEnabled:      d.statusParams.DaemonConfig.EnableNoEBPFServices,
+		NetworkPolicyEnabled: d.statusParams.DaemonConfig.EnableNoEBPFNetworkPolicy,
+		Capabilities:         modelCaps,
+	}
 }
 
 func (d *statusCollector) getProbes() []Probe {

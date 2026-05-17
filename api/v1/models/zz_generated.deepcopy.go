@@ -892,6 +892,11 @@ func (in *StatusResponse) DeepCopyInto(out *StatusResponse) {
 		*out = new(Status)
 		**out = **in
 	}
+	if in.NoEBPF != nil {
+		in, out := &in.NoEBPF, &out.NoEBPF
+		*out = new(NoEBPFStatus)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.ClockSource != nil {
 		in, out := &in.ClockSource, &out.ClockSource
 		*out = new(ClockSource)

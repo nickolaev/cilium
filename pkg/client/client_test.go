@@ -112,14 +112,16 @@ func TestFormStatusResponse(t *testing.T) {
 					Features: &models.KubeProxyReplacementFeatures{
 						Annotations: []string{
 							"No-eBPF datapath: linux-route (experimental)",
-							"No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort TCP/UDP M1 subset)",
+							"No-eBPF Service replacement: nftables enabled (ClusterIP/NodePort/LoadBalancer/ExternalIPs/LocalRedirect TCP/UDP/SCTP subset, source-range filtering, session affinity, healthCheckNodePort, traffic-policy local, topology-aware hints, LocalRedirectPolicy)",
+							"No-eBPF Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors, matchExpressions, named ports, endPort, ipBlock except, and TCP/UDP/SCTP subset)",
+							"No-eBPF unsupported: CiliumNetworkPolicy/L7/FQDN/entities, host firewall, BPF masquerade, transparent encryption, XDP acceleration, bandwidth manager, egress gateway",
 							"io.cilium/lb-algorithm",
 						},
 					},
 				},
 			},
 			sd:       StatusDetails{},
-			expected: "KubeProxyReplacement:\t\t\nNo-eBPF:\tdatapath: linux-route (experimental); Service replacement: nftables enabled (ClusterIP/NodePort TCP/UDP M1 subset)\n",
+			expected: "KubeProxyReplacement:\t\t\nNo-eBPF:\tdatapath: linux-route (experimental); Service replacement: nftables enabled (ClusterIP/NodePort/LoadBalancer/ExternalIPs/LocalRedirect TCP/UDP/SCTP subset, source-range filtering, session affinity, healthCheckNodePort, traffic-policy local, topology-aware hints, LocalRedirectPolicy); Kubernetes NetworkPolicy: nftables enabled (namespace/pod selectors, matchExpressions, named ports, endPort, ipBlock except, and TCP/UDP/SCTP subset); unsupported: CiliumNetworkPolicy/L7/FQDN/entities, host firewall, BPF masquerade, transparent encryption, XDP acceleration, bandwidth manager, egress gateway\n",
 		},
 	}
 	for _, tc := range testCases {
