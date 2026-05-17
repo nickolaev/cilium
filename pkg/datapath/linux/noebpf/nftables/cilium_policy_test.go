@@ -74,6 +74,59 @@ func TestPoliciesFromCiliumNetworkPoliciesAllowAndDenyPrecedence(t *testing.T) {
 	require.Less(t, denyIdx, allowIdx, script)
 }
 
+func TestPoliciesFromCiliumNetworkPoliciesAllowAndDenyAcrossPolicies(t *testing.T) {
+	server := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "server", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP}}}}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.6.10"}}},
+	}
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "backend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.6.20"}}},
+	}
+	allow := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "allow", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}},
+			Ingress: []policyapi.IngressRule{{
+				IngressCommonRule: policyapi.IngressCommonRule{
+					FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+				},
+				ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+			}},
+		},
+	}
+	deny := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "deny", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}},
+			IngressDeny: []policyapi.IngressDenyRule{{
+				IngressCommonRule: policyapi.IngressCommonRule{
+					FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+				},
+				ToPorts: []policyapi.PortDenyRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+			}},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: server}},
+		[]*corev1.Pod{server, client},
+		[]k8sTables.Namespace{{Name: "backend"}},
+		[]*ciliumv2.CiliumNetworkPolicy{allow, deny},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	denyIdx := strings.Index(script, "ip saddr 10.244.6.20/32 ip daddr 10.244.6.10/32 tcp dport 8080 counter drop")
+	allowIdx := strings.Index(script, "ip saddr 10.244.6.20/32 ip daddr 10.244.6.10/32 tcp dport 8080 counter accept")
+	require.NotEqual(t, -1, denyIdx, script)
+	require.NotEqual(t, -1, allowIdx, script)
+	require.Less(t, denyIdx, allowIdx, script)
+}
+
 func TestPoliciesFromCiliumNetworkPoliciesNamedPortsAndEndPort(t *testing.T) {
 	server := &corev1.Pod{
 		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
