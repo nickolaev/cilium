@@ -394,6 +394,22 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 			want: "ICMP policy is not supported in no-eBPF mode",
 		},
 		{
+			name: "to services",
+			cnp: &ciliumv2.CiliumNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "services", Namespace: "frontend"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Egress: []policyapi.EgressRule{{
+						EgressCommonRule: policyapi.EgressCommonRule{
+							ToServices: []policyapi.Service{{K8sService: &policyapi.K8sServiceNamespace{ServiceName: "svc"}}},
+						},
+						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+					}},
+				},
+			},
+			want: "toServices are not supported in no-eBPF mode",
+		},
+		{
 			name: "from entities",
 			cnp: &ciliumv2.CiliumNetworkPolicy{
 				ObjectMeta: k8smetav1.ObjectMeta{Name: "entities", Namespace: "frontend"},

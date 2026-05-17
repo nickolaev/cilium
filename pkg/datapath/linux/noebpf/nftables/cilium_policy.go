@@ -172,6 +172,9 @@ func ciliumEgressRule(endpoint Pod, rule policyapi.EgressRule) (PolicyRule, erro
 	if len(rule.ToFQDNs) > 0 {
 		return PolicyRule{}, fmt.Errorf("toFQDNs are not supported in no-eBPF mode")
 	}
+	if len(rule.ToServices) > 0 {
+		return PolicyRule{}, fmt.Errorf("toServices are not supported in no-eBPF mode")
+	}
 	if len(rule.ICMPs) > 0 {
 		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
 	}
