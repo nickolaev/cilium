@@ -362,6 +362,38 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 			want: "toFQDNs are not supported in no-eBPF mode",
 		},
 		{
+			name: "icmp ingress",
+			cnp: &ciliumv2.CiliumNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "icmp-ingress", Namespace: "frontend"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					Ingress: []policyapi.IngressRule{{
+						IngressCommonRule: policyapi.IngressCommonRule{
+							FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+						},
+						ICMPs: policyapi.ICMPRules{{Fields: []policyapi.ICMPField{{}}}},
+					}},
+				},
+			},
+			want: "ICMP policy is not supported in no-eBPF mode",
+		},
+		{
+			name: "icmp egress deny",
+			cnp: &ciliumv2.CiliumNetworkPolicy{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "icmp-egress", Namespace: "frontend"},
+				Spec: &policyapi.Rule{
+					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+					EgressDeny: []policyapi.EgressDenyRule{{
+						EgressCommonRule: policyapi.EgressCommonRule{
+							ToEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}}},
+						},
+						ICMPs: policyapi.ICMPRules{{Fields: []policyapi.ICMPField{{}}}},
+					}},
+				},
+			},
+			want: "ICMP policy is not supported in no-eBPF mode",
+		},
+		{
 			name: "from entities",
 			cnp: &ciliumv2.CiliumNetworkPolicy{
 				ObjectMeta: k8smetav1.ObjectMeta{Name: "entities", Namespace: "frontend"},

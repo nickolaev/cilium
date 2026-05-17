@@ -154,6 +154,9 @@ func ciliumIngressRule(endpoint Pod, rule policyapi.IngressRule) (PolicyRule, er
 	if rule.Authentication != nil {
 		return PolicyRule{}, fmt.Errorf("authentication is not supported in no-eBPF mode")
 	}
+	if len(rule.ICMPs) > 0 {
+		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
+	}
 	peers, err := ciliumIngressPeers(rule.IngressCommonRule)
 	if err != nil {
 		return PolicyRule{}, err
@@ -168,6 +171,9 @@ func ciliumIngressRule(endpoint Pod, rule policyapi.IngressRule) (PolicyRule, er
 func ciliumEgressRule(endpoint Pod, rule policyapi.EgressRule) (PolicyRule, error) {
 	if len(rule.ToFQDNs) > 0 {
 		return PolicyRule{}, fmt.Errorf("toFQDNs are not supported in no-eBPF mode")
+	}
+	if len(rule.ICMPs) > 0 {
+		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
 	}
 	if rule.Authentication != nil {
 		return PolicyRule{}, fmt.Errorf("authentication is not supported in no-eBPF mode")
@@ -184,6 +190,9 @@ func ciliumEgressRule(endpoint Pod, rule policyapi.EgressRule) (PolicyRule, erro
 }
 
 func ciliumIngressDenyRule(endpoint Pod, rule policyapi.IngressDenyRule) (PolicyRule, error) {
+	if len(rule.ICMPs) > 0 {
+		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
+	}
 	peers, err := ciliumIngressPeers(rule.IngressCommonRule)
 	if err != nil {
 		return PolicyRule{}, err
@@ -196,6 +205,9 @@ func ciliumIngressDenyRule(endpoint Pod, rule policyapi.IngressDenyRule) (Policy
 }
 
 func ciliumEgressDenyRule(endpoint Pod, rule policyapi.EgressDenyRule) (PolicyRule, error) {
+	if len(rule.ICMPs) > 0 {
+		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
+	}
 	peers, err := ciliumEgressPeers(rule.EgressCommonRule)
 	if err != nil {
 		return PolicyRule{}, err
