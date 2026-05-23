@@ -53,10 +53,11 @@ func TestGetNoEBPFAnnotations(t *testing.T) {
 		"LocalRedirectPolicy: supported-subset",
 		"Kubernetes NetworkPolicy: supported-subset",
 		"NetworkPolicy named ports and endPort: supported-subset",
-		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy: supported-subset (L3/L4 allow and deny rules, selector matching, namespace labels, named ports, endPort, and ipBlock/except; deny rules render before allow rules on overlap)",
+		"Cilium CIDR groups: supported-subset",
+		"Cilium service targets: supported-subset",
+		"ICMP policy: supported-subset",
+		"CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy: supported-subset (L3/L4 allow and deny rules, selector matching, namespace labels, named ports, endPort, ipBlock/except, CIDR groups, service targets, and ICMP; deny rules render before allow rules on overlap)",
 		"Cilium deny policies: supported-subset",
-		"ICMP policy: unsupported",
-		"Service-based policy targets: unsupported",
 		"Proxy-dependent authentication: unsupported",
 	} {
 		if !strings.Contains(joined, want) {

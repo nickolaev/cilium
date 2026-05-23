@@ -40,10 +40,11 @@ their current status in the no-eBPF / linux-route branch.
      - Namespace-scoped Cilium CRD
      - Partial
      - L3 / L4 allow and deny rules, selector matching, namespace labels,
-       named ports, ``endPort``, and ``ipBlock`` / ``except`` are supported.
+       named ports, ``endPort``, ``ipBlock`` / ``except``, CIDR groups,
+       service targets, and ICMP are supported.
        Deny rules are rendered before allow rules so they win on overlap.
-       Rich Cilium identity-aware semantics, L7 rules, DNS rules, ICMP rules,
-       service selectors, authentication, node selectors, and Cilium-only
+       Rich Cilium identity-aware semantics, L7 rules, DNS rules,
+       authentication, node selectors, and Cilium-only
        entity/group features remain out of scope.
    * - ``CiliumClusterwideNetworkPolicy``
      - Cluster-scoped Cilium CRD
@@ -84,10 +85,8 @@ backend:
 * Host policies and node-level enforcement.
 * L7 policy, including HTTP, Kafka, TLS, and other proxy-layer rules.
 * DNS / FQDN policy via ``toFQDNs``.
-* ICMP-specific policy rules.
-* Service-based policy targets such as ``toServices``.
 * Identity-aware selectors and special entities.
-* Node selectors, external groups, and CIDR-group integrations.
+* Node selectors.
 * Proxy-dependent authentication semantics.
 * Any policy behavior that depends on eBPF-only datapath hooks.
 
