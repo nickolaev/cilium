@@ -23,9 +23,11 @@ const (
 type Protocol string
 
 const (
-	ProtocolTCP  Protocol = "tcp"
-	ProtocolUDP  Protocol = "udp"
-	ProtocolSCTP Protocol = "sctp"
+	ProtocolTCP    Protocol = "tcp"
+	ProtocolUDP    Protocol = "udp"
+	ProtocolSCTP   Protocol = "sctp"
+	ProtocolICMP   Protocol = "icmp"
+	ProtocolICMPv6 Protocol = "icmpv6"
 )
 
 // ServiceDNAT is the Service translation tuple rendered into the owned nftables
@@ -189,7 +191,7 @@ func validateRuleTuple(source, destination netip.Prefix, port, endPort uint16, p
 
 func validateProtocol(proto Protocol) error {
 	switch proto {
-	case ProtocolTCP, ProtocolUDP, ProtocolSCTP:
+	case ProtocolTCP, ProtocolUDP, ProtocolSCTP, ProtocolICMP, ProtocolICMPv6:
 		return nil
 	default:
 		return fmt.Errorf("unsupported no-eBPF protocol %q", proto)
@@ -328,6 +330,10 @@ func (a PolicyDeny) rule() string {
 
 func policyRuleString(source, destination netip.Prefix, port, endPort uint16, proto Protocol, verdict string) string {
 	family := prefixFamily(source)
+	if proto == ProtocolICMP || proto == ProtocolICMPv6 {
+		return fmt.Sprintf("%s saddr %s %s daddr %s %s type %d counter %s",
+			family, source, family, destination, proto, port, verdict)
+	}
 	if port == 0 && endPort == 0 {
 		return fmt.Sprintf("%s saddr %s %s daddr %s counter %s",
 			family, source, family, destination, verdict)

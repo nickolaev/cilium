@@ -25,12 +25,12 @@ func TestDesiredStateHonorsBackendGates(t *testing.T) {
 	mixedFamilyFrontend := frontend(loadbalancer.SVCTypeClusterIP, loadbalancer.TCP, "10.245.0.10", 80,
 		backend(loadbalancer.TCP, "fd00:10:244:1::10", 8080))
 
-	state, err := desiredState([]*loadbalancer.Frontend{mixedFamilyFrontend}, nil, nil, nil, nil, nil, nil, false, false)
+	state, err := desiredState([]*loadbalancer.Frontend{mixedFamilyFrontend}, nil, nil, nil, nil, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Empty(t, state.Services)
 	require.Empty(t, state.Policies)
 
-	_, err = desiredState([]*loadbalancer.Frontend{mixedFamilyFrontend}, nil, nil, nil, nil, nil, nil, true, false)
+	_, err = desiredState([]*loadbalancer.Frontend{mixedFamilyFrontend}, nil, nil, nil, nil, nil, nil, nil, true, false)
 	require.Error(t, err)
 }
 
@@ -85,6 +85,7 @@ func TestDesiredStateIncludesCiliumPolicies(t *testing.T) {
 		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
+		nil,
 		false,
 		true,
 	)
@@ -164,6 +165,7 @@ func TestDesiredStateMixesKNPAndCiliumPolicies(t *testing.T) {
 		[]*networkingv1.NetworkPolicy{knp},
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
+		nil,
 		false,
 		true,
 	)
@@ -219,6 +221,7 @@ func TestDesiredStatePrefersCiliumDenyOverKNPAllow(t *testing.T) {
 		[]k8sTables.Namespace{{Name: "backend"}},
 		[]*networkingv1.NetworkPolicy{knp},
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+		nil,
 		nil,
 		false,
 		true,

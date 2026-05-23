@@ -9,13 +9,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	intstr "k8s.io/apimachinery/pkg/util/intstr"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/cilium/cilium/pkg/k8s/resource"
 	corev1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/core/v1"
 	slimmetav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	k8sTables "github.com/cilium/cilium/pkg/k8s/tables"
+	"github.com/cilium/cilium/pkg/labels"
+	"github.com/cilium/cilium/pkg/loadbalancer"
 	policyapi "github.com/cilium/cilium/pkg/policy/api"
+	"github.com/cilium/cilium/pkg/source"
 
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -60,6 +64,8 @@ func TestPoliciesFromCiliumNetworkPoliciesAllowAndDenyPrecedence(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, client},
 		[]k8sTables.Namespace{{Name: "backend", Labels: map[string]string{"team": "green"}}, {Name: "frontend", Labels: map[string]string{"team": "blue"}}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -113,6 +119,8 @@ func TestPoliciesFromCiliumNetworkPoliciesAllowAndDenyAcrossPolicies(t *testing.
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, client},
 		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{allow, deny},
 	)
 	require.NoError(t, err)
@@ -161,6 +169,8 @@ func TestPoliciesFromCiliumNetworkPoliciesNamedPortsAndEndPort(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, client},
 		[]k8sTables.Namespace{{Name: "backend", Labels: map[string]string{"team": "green"}}, {Name: "frontend", Labels: map[string]string{"team": "blue"}}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -205,6 +215,8 @@ func TestPoliciesFromCiliumNetworkPoliciesEgressAllowAndDeny(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: client}},
 		[]*corev1.Pod{client, server},
 		[]k8sTables.Namespace{{Name: "frontend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -254,6 +266,8 @@ func TestPoliciesFromCiliumClusterwideNetworkPolicies(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, backendClient, client},
 		[]k8sTables.Namespace{{Name: "backend", Labels: map[string]string{"team": "green"}}, {Name: "frontend", Labels: map[string]string{"team": "blue"}}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
 	)
 	require.NoError(t, err)
@@ -304,6 +318,8 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesEgressAllowAndDeny(t *testi
 		[]k8sTables.LocalPod{{Pod: client}},
 		[]*corev1.Pod{client, server},
 		[]k8sTables.Namespace{{Name: "frontend", Labels: map[string]string{"team": "green"}}, {Name: "backend", Labels: map[string]string{"team": "blue"}}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
 	)
 	require.NoError(t, err)
@@ -342,6 +358,8 @@ func TestPoliciesFromCiliumNetworkPoliciesEgressCIDRSetExcept(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: client}},
 		[]*corev1.Pod{client},
 		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -378,6 +396,8 @@ func TestPoliciesFromCiliumNetworkPoliciesEgressCIDRDeny(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: client}},
 		[]*corev1.Pod{client},
 		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -388,6 +408,251 @@ func TestPoliciesFromCiliumNetworkPoliciesEgressCIDRDeny(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, script, "counter drop")
 	require.NotContains(t, script, "10.1.0.1")
+}
+
+func TestPoliciesFromCiliumNetworkPoliciesICMP(t *testing.T) {
+	server := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.10"}}},
+	}
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "backend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.20"}}},
+	}
+	icmpType := intstr.FromInt(8)
+	cnp := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "icmp", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}},
+			Ingress: []policyapi.IngressRule{{
+				IngressCommonRule: policyapi.IngressCommonRule{
+					FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
+				},
+				ICMPs: policyapi.ICMPRules{{Fields: []policyapi.ICMPField{{Family: policyapi.IPv4Family, Type: &icmpType}}}},
+			}},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: server}},
+		[]*corev1.Pod{server, client},
+		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		nil,
+		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "ip saddr 10.244.9.20/32 ip daddr 10.244.9.10/32 icmp type 8 counter accept")
+	require.NotContains(t, script, "tcp dport")
+}
+
+func TestPoliciesFromCiliumNetworkPoliciesCiliumCIDRGroups(t *testing.T) {
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "backend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.30"}}},
+	}
+	cidrGroups := []*ciliumv2.CiliumCIDRGroup{
+		{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: "ref-group", Labels: map[string]string{"tier": "prod"}},
+			Spec:       ciliumv2.CiliumCIDRGroupSpec{ExternalCIDRs: []policyapi.CIDR{"203.0.113.0/24"}},
+		},
+		{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: "selector-group", Labels: map[string]string{"tier": "prod"}},
+			Spec:       ciliumv2.CiliumCIDRGroupSpec{ExternalCIDRs: []policyapi.CIDR{"198.51.100.0/24"}},
+		},
+		{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: "ignored-group", Labels: map[string]string{"tier": "dev"}},
+			Spec:       ciliumv2.CiliumCIDRGroupSpec{ExternalCIDRs: []policyapi.CIDR{"192.0.2.0/24"}},
+		},
+	}
+	cnp := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "cidr-groups", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+			Egress: []policyapi.EgressRule{
+				{
+					EgressCommonRule: policyapi.EgressCommonRule{
+						ToCIDRSet: []policyapi.CIDRRule{{CIDRGroupRef: "ref-group"}},
+					},
+					ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "53", Protocol: policyapi.ProtoUDP}}}},
+				},
+				{
+					EgressCommonRule: policyapi.EgressCommonRule{
+						ToCIDRSet: []policyapi.CIDRRule{{CIDRGroupSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"cidrgroup:tier": "prod"}}}}},
+					},
+					ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+				},
+			},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: client}},
+		[]*corev1.Pod{client},
+		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		cidrGroups,
+		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "ip saddr 10.244.9.30/32 ip daddr 203.0.113.0/24 udp dport 53 counter accept")
+	require.Contains(t, script, "ip saddr 10.244.9.30/32 ip daddr 198.51.100.0/24 tcp dport 80 counter accept")
+	require.NotContains(t, script, "192.0.2.0/24")
+}
+
+func TestPoliciesFromCiliumNetworkPoliciesExternalGroups(t *testing.T) {
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "backend", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.31"}}},
+	}
+	server := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "server", Namespace: "backend", Labels: map[string]string{"app": "server"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.9.32"}}},
+	}
+	group := policyapi.Groups{AWS: &policyapi.AWSGroup{Labels: map[string]string{"team": "blue"}, SecurityGroupsIds: []string{"sg-12345678"}}}
+	cidrGroups := []*ciliumv2.CiliumCIDRGroup{
+		{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: "aws-group", Labels: map[string]string{group.LabelKey(): ""}},
+			Spec:       ciliumv2.CiliumCIDRGroupSpec{ExternalCIDRs: []policyapi.CIDR{"203.0.113.0/24"}},
+		},
+	}
+	cnpClient := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "to-groups", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+			Egress: []policyapi.EgressRule{{
+				EgressCommonRule: policyapi.EgressCommonRule{ToGroups: []policyapi.Groups{group}},
+				ToPorts:          []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "443", Protocol: policyapi.ProtoTCP}}}},
+			}},
+		},
+	}
+	cnpServer := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "from-groups", Namespace: "backend"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}},
+			Ingress: []policyapi.IngressRule{{
+				IngressCommonRule: policyapi.IngressCommonRule{FromGroups: []policyapi.Groups{group}},
+				ToPorts:           []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
+			}},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: client}, {Pod: server}},
+		[]*corev1.Pod{client, server},
+		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		cidrGroups,
+		[]*ciliumv2.CiliumNetworkPolicy{cnpClient, cnpServer},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 2)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "ip saddr 10.244.9.31/32 ip daddr 203.0.113.0/24 tcp dport 443 counter accept")
+	require.Contains(t, script, "ip saddr 203.0.113.0/24 ip daddr 10.244.9.32/32 tcp dport 80 counter accept")
+}
+
+func TestPoliciesFromCiliumNetworkPoliciesToServices(t *testing.T) {
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "default", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.20.20"}}},
+	}
+	backendOne := backend(loadbalancer.TCP, "10.244.20.10", 8080)
+	backendTwo := backend(loadbalancer.TCP, "10.244.20.11", 8080)
+	svc := &loadbalancer.Service{
+		Name:   loadbalancer.NewServiceName("default", "echo"),
+		Source: source.Kubernetes,
+		Labels: labels.Labels{"app": labels.NewLabel("app", "echo", labels.LabelSourceK8s)},
+	}
+	frontends := []*loadbalancer.Frontend{
+		frontendWithService(loadbalancer.SVCTypeClusterIP, loadbalancer.TCP, "10.96.0.10", 80, svc, backendOne, backendTwo),
+	}
+	cnp := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "to-services", Namespace: "default"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+			Egress: []policyapi.EgressRule{{
+				EgressCommonRule: policyapi.EgressCommonRule{
+					ToServices: []policyapi.Service{{K8sService: &policyapi.K8sServiceNamespace{ServiceName: "echo", Namespace: "default"}}},
+				},
+				ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+			}},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: client}},
+		[]*corev1.Pod{client},
+		[]k8sTables.Namespace{{Name: "default"}},
+		frontends,
+		nil,
+		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "ip saddr 10.244.20.20/32 ip daddr 10.244.20.10/32 tcp dport 8080 counter accept")
+	require.Contains(t, script, "ip saddr 10.244.20.20/32 ip daddr 10.244.20.11/32 tcp dport 8080 counter accept")
+}
+
+func TestPoliciesFromCiliumNetworkPoliciesToServicesSelector(t *testing.T) {
+	client := &corev1.Pod{
+		ObjectMeta: slimmetav1.ObjectMeta{Name: "client", Namespace: "default", Labels: map[string]string{"app": "client"}},
+		Status:     corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.20.21"}}},
+	}
+	backendOne := backend(loadbalancer.TCP, "10.244.20.12", 8080)
+	backendTwo := backend(loadbalancer.TCP, "10.244.20.13", 8080)
+	svc := &loadbalancer.Service{
+		Name:   loadbalancer.NewServiceName("default", "echo"),
+		Source: source.Kubernetes,
+		Labels: labels.Labels{"app": labels.NewLabel("app", "echo", labels.LabelSourceK8s)},
+	}
+	frontends := []*loadbalancer.Frontend{
+		frontendWithService(loadbalancer.SVCTypeClusterIP, loadbalancer.TCP, "10.96.0.11", 80, svc, backendOne, backendTwo),
+	}
+	cnp := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "to-services-selector", Namespace: "default"},
+		Spec: &policyapi.Rule{
+			EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
+			Egress: []policyapi.EgressRule{{
+				EgressCommonRule: policyapi.EgressCommonRule{
+					ToServices: []policyapi.Service{{K8sServiceSelector: &policyapi.K8sServiceSelectorNamespace{
+						Selector:  policyapi.ServiceSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "echo"}}},
+						Namespace: "default",
+					}}},
+				},
+				ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "8080", Protocol: policyapi.ProtoTCP}}}},
+			}},
+		},
+	}
+
+	policies, err := PoliciesFromCiliumNetworkPolicies(
+		[]k8sTables.LocalPod{{Pod: client}},
+		[]*corev1.Pod{client},
+		[]k8sTables.Namespace{{Name: "default"}},
+		frontends,
+		nil,
+		[]*ciliumv2.CiliumNetworkPolicy{cnp},
+	)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+
+	script, err := Render(DesiredState{Policies: policies})
+	require.NoError(t, err)
+	require.Contains(t, script, "ip saddr 10.244.20.21/32 ip daddr 10.244.20.12/32 tcp dport 8080 counter accept")
+	require.Contains(t, script, "ip saddr 10.244.20.21/32 ip daddr 10.244.20.13/32 tcp dport 8080 counter accept")
 }
 
 func TestPoliciesFromCiliumNetworkPoliciesMatchAllPorts(t *testing.T) {
@@ -415,6 +680,8 @@ func TestPoliciesFromCiliumNetworkPoliciesMatchAllPorts(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, client},
 		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -451,6 +718,8 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesMatchAllPorts(t *testing.T)
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, client},
 		[]k8sTables.Namespace{{Name: "frontend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
 	)
 	require.NoError(t, err)
@@ -486,6 +755,8 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesEgressCIDRSetExcept(t *test
 		[]k8sTables.LocalPod{{Pod: client}},
 		[]*corev1.Pod{client},
 		[]k8sTables.Namespace{{Name: "frontend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
 	)
 	require.NoError(t, err)
@@ -522,6 +793,8 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesEgressCIDRDeny(t *testing.T
 		[]k8sTables.LocalPod{{Pod: client}},
 		[]*corev1.Pod{client},
 		[]k8sTables.Namespace{{Name: "frontend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
 	)
 	require.NoError(t, err)
@@ -586,6 +859,8 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesMatchExpressions(t *testing
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, existsClient, otherClient},
 		[]k8sTables.Namespace{{Name: "backend", Labels: map[string]string{"team": "blue"}}, {Name: "frontend", Labels: map[string]string{"team": "blue"}}, {Name: "other", Labels: map[string]string{"team": "red"}}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumClusterwideNetworkPolicy{ccnp},
 	)
 	require.NoError(t, err)
@@ -643,54 +918,6 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 			want: "toFQDNs are not supported in no-eBPF mode",
 		},
 		{
-			name: "icmp ingress",
-			cnp: &ciliumv2.CiliumNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "icmp-ingress", Namespace: "frontend"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					Ingress: []policyapi.IngressRule{{
-						IngressCommonRule: policyapi.IngressCommonRule{
-							FromEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}}},
-						},
-						ICMPs: policyapi.ICMPRules{{Fields: []policyapi.ICMPField{{}}}},
-					}},
-				},
-			},
-			want: "ICMP policy is not supported in no-eBPF mode",
-		},
-		{
-			name: "icmp egress deny",
-			cnp: &ciliumv2.CiliumNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "icmp-egress", Namespace: "frontend"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					EgressDeny: []policyapi.EgressDenyRule{{
-						EgressCommonRule: policyapi.EgressCommonRule{
-							ToEndpoints: []policyapi.EndpointSelector{{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "server"}}}},
-						},
-						ICMPs: policyapi.ICMPRules{{Fields: []policyapi.ICMPField{{}}}},
-					}},
-				},
-			},
-			want: "ICMP policy is not supported in no-eBPF mode",
-		},
-		{
-			name: "to services",
-			cnp: &ciliumv2.CiliumNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "services", Namespace: "frontend"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					Egress: []policyapi.EgressRule{{
-						EgressCommonRule: policyapi.EgressCommonRule{
-							ToServices: []policyapi.Service{{K8sService: &policyapi.K8sServiceNamespace{ServiceName: "svc"}}},
-						},
-						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
-					}},
-				},
-			},
-			want: "toServices are not supported in no-eBPF mode",
-		},
-		{
 			name: "authentication",
 			cnp: &ciliumv2.CiliumNetworkPolicy{
 				ObjectMeta: k8smetav1.ObjectMeta{Name: "auth", Namespace: "frontend"},
@@ -724,22 +951,6 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 			want: "fromEntities are not supported in no-eBPF mode",
 		},
 		{
-			name: "from groups",
-			cnp: &ciliumv2.CiliumNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "groups", Namespace: "frontend"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					Ingress: []policyapi.IngressRule{{
-						IngressCommonRule: policyapi.IngressCommonRule{
-							FromGroups: []policyapi.Groups{{AWS: &policyapi.AWSGroup{Labels: map[string]string{"team": "blue"}}}},
-						},
-						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
-					}},
-				},
-			},
-			want: "fromGroups are not supported in no-eBPF mode",
-		},
-		{
 			name: "to entities",
 			cnp: &ciliumv2.CiliumNetworkPolicy{
 				ObjectMeta: k8smetav1.ObjectMeta{Name: "to-entities", Namespace: "frontend"},
@@ -755,22 +966,6 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 			},
 			want: "toEntities are not supported in no-eBPF mode",
 		},
-		{
-			name: "to groups",
-			cnp: &ciliumv2.CiliumNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "egress-groups", Namespace: "frontend"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					Egress: []policyapi.EgressRule{{
-						EgressCommonRule: policyapi.EgressCommonRule{
-							ToGroups: []policyapi.Groups{{AWS: &policyapi.AWSGroup{SecurityGroupsIds: []string{"sg-12345678"}}}},
-						},
-						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
-					}},
-				},
-			},
-			want: "toGroups are not supported in no-eBPF mode",
-		},
 	}
 
 	for _, tc := range testCases {
@@ -779,6 +974,8 @@ func TestPoliciesFromCiliumNetworkPoliciesRejectUnsupportedFeatures(t *testing.T
 				[]k8sTables.LocalPod{{Pod: client}},
 				[]*corev1.Pod{client},
 				[]k8sTables.Namespace{{Name: "frontend"}},
+				nil,
+				nil,
 				[]*ciliumv2.CiliumNetworkPolicy{tc.cnp},
 			)
 			require.ErrorContains(t, err, tc.want)
@@ -797,35 +994,6 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t
 		ccnp *ciliumv2.CiliumClusterwideNetworkPolicy
 		want string
 	}{
-		{
-			name: "icmp egress",
-			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "icmp-egress"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					Egress: []policyapi.EgressRule{{
-						ICMPs: policyapi.ICMPRules{{Fields: []policyapi.ICMPField{{}}}},
-					}},
-				},
-			},
-			want: "ICMP policy is not supported in no-eBPF mode",
-		},
-		{
-			name: "to services",
-			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "services"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					Egress: []policyapi.EgressRule{{
-						EgressCommonRule: policyapi.EgressCommonRule{
-							ToServices: []policyapi.Service{{K8sService: &policyapi.K8sServiceNamespace{ServiceName: "svc"}}},
-						},
-						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
-					}},
-				},
-			},
-			want: "toServices are not supported in no-eBPF mode",
-		},
 		{
 			name: "authentication",
 			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
@@ -875,22 +1043,6 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t
 			},
 			want: "toEntities are not supported in no-eBPF mode",
 		},
-		{
-			name: "from groups",
-			ccnp: &ciliumv2.CiliumClusterwideNetworkPolicy{
-				ObjectMeta: k8smetav1.ObjectMeta{Name: "groups"},
-				Spec: &policyapi.Rule{
-					EndpointSelector: policyapi.EndpointSelector{LabelSelector: &slimmetav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}}},
-					Ingress: []policyapi.IngressRule{{
-						IngressCommonRule: policyapi.IngressCommonRule{
-							FromGroups: []policyapi.Groups{{AWS: &policyapi.AWSGroup{Labels: map[string]string{"team": "blue"}}}},
-						},
-						ToPorts: []policyapi.PortRule{{Ports: []policyapi.PortProtocol{{Port: "80", Protocol: policyapi.ProtoTCP}}}},
-					}},
-				},
-			},
-			want: "fromGroups are not supported in no-eBPF mode",
-		},
 	}
 
 	for _, tc := range testCases {
@@ -899,6 +1051,8 @@ func TestPoliciesFromCiliumClusterwideNetworkPoliciesRejectUnsupportedFeatures(t
 				[]k8sTables.LocalPod{{Pod: client}},
 				[]*corev1.Pod{client},
 				[]k8sTables.Namespace{{Name: "frontend"}},
+				nil,
+				nil,
 				[]*ciliumv2.CiliumClusterwideNetworkPolicy{tc.ccnp},
 			)
 			require.ErrorContains(t, err, tc.want)
@@ -939,6 +1093,8 @@ func TestPoliciesFromCiliumNetworkPoliciesNamespaceBoundary(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, backendClient, frontendClient},
 		[]k8sTables.Namespace{{Name: "backend"}, {Name: "frontend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -975,6 +1131,8 @@ func TestPoliciesFromCiliumNetworkPoliciesCIDRSetExcept(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server},
 		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -1025,6 +1183,8 @@ func TestPoliciesFromCiliumNetworkPoliciesMatchExpressionsNotIn(t *testing.T) {
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, backendClient, frontendClient},
 		[]k8sTables.Namespace{{Name: "backend", Labels: map[string]string{"team": "green"}}, {Name: "frontend", Labels: map[string]string{"team": "blue"}}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)
@@ -1087,6 +1247,8 @@ func TestPoliciesFromCiliumNetworkPoliciesMatchExpressionsExistsAndDoesNotExist(
 		[]k8sTables.LocalPod{{Pod: server}},
 		[]*corev1.Pod{server, existsClient, doesNotExistClient},
 		[]k8sTables.Namespace{{Name: "backend"}},
+		nil,
+		nil,
 		[]*ciliumv2.CiliumNetworkPolicy{cnp},
 	)
 	require.NoError(t, err)

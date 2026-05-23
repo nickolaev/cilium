@@ -14,6 +14,7 @@ import (
 	corev1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/core/v1"
 	metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	k8sTables "github.com/cilium/cilium/pkg/k8s/tables"
+	"github.com/cilium/cilium/pkg/loadbalancer"
 	"github.com/cilium/cilium/pkg/option"
 	policyapi "github.com/cilium/cilium/pkg/policy/api"
 )
@@ -22,7 +23,8 @@ var noebpfPolicyLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 // PoliciesFromCiliumNetworkPolicies compiles the supported no-eBPF subset of
 // namespaced CiliumNetworkPolicy objects into nftables endpoint policy.
-func PoliciesFromCiliumNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, cnps []*ciliumv2.CiliumNetworkPolicy) ([]EndpointPolicy, error) {
+func PoliciesFromCiliumNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, frontends []*loadbalancer.Frontend, cidrGroups []*ciliumv2.CiliumCIDRGroup, cnps []*ciliumv2.CiliumNetworkPolicy) ([]EndpointPolicy, error) {
+	groups := newCIDRGroupIndex(cidrGroups)
 	parsed := make([]parsedCiliumPolicy, 0, len(cnps))
 	for _, cnp := range cnps {
 		if cnp == nil {
@@ -34,12 +36,13 @@ func PoliciesFromCiliumNetworkPolicies(localPods []k8sTables.LocalPod, allPods [
 		}
 		parsed = append(parsed, parsedCiliumPolicy{namespace: cnp.Namespace, name: cnp.Name, rules: rules})
 	}
-	return policiesFromParsedCiliumRules(localPods, allPods, namespaces, parsed)
+	return policiesFromParsedCiliumRules(localPods, allPods, namespaces, frontends, groups, parsed)
 }
 
 // PoliciesFromCiliumClusterwideNetworkPolicies compiles the supported no-eBPF
 // subset of clusterwide CiliumClusterwideNetworkPolicy objects into endpoint policy.
-func PoliciesFromCiliumClusterwideNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, ccnps []*ciliumv2.CiliumClusterwideNetworkPolicy) ([]EndpointPolicy, error) {
+func PoliciesFromCiliumClusterwideNetworkPolicies(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, frontends []*loadbalancer.Frontend, cidrGroups []*ciliumv2.CiliumCIDRGroup, ccnps []*ciliumv2.CiliumClusterwideNetworkPolicy) ([]EndpointPolicy, error) {
+	groups := newCIDRGroupIndex(cidrGroups)
 	parsed := make([]parsedCiliumPolicy, 0, len(ccnps))
 	for _, ccnp := range ccnps {
 		if ccnp == nil {
@@ -51,7 +54,7 @@ func PoliciesFromCiliumClusterwideNetworkPolicies(localPods []k8sTables.LocalPod
 		}
 		parsed = append(parsed, parsedCiliumPolicy{namespace: "", name: ccnp.Name, rules: rules})
 	}
-	return policiesFromParsedCiliumRules(localPods, allPods, namespaces, parsed)
+	return policiesFromParsedCiliumRules(localPods, allPods, namespaces, frontends, groups, parsed)
 }
 
 type parsedCiliumPolicy struct {
@@ -60,13 +63,13 @@ type parsedCiliumPolicy struct {
 	rules     policyapi.Rules
 }
 
-func policiesFromParsedCiliumRules(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, policies []parsedCiliumPolicy) ([]EndpointPolicy, error) {
+func policiesFromParsedCiliumRules(localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, frontends []*loadbalancer.Frontend, groups cidrGroupIndex, policies []parsedCiliumPolicy) ([]EndpointPolicy, error) {
 	pods := podsFromK8sPods(localPods, allPods, namespaces)
 	byPod := map[string]*EndpointPolicySpec{}
 
 	for _, policy := range policies {
 		for _, rule := range policy.rules {
-			if err := addCiliumRule(rule, pods, byPod, policy.namespace, policy.name); err != nil {
+			if err := addCiliumRule(rule, pods, frontends, groups, byPod, policy.namespace, policy.name); err != nil {
 				return nil, fmt.Errorf("cilium policy %s/%s: %w", policy.namespace, policy.name, err)
 			}
 		}
@@ -79,7 +82,7 @@ func policiesFromParsedCiliumRules(localPods []k8sTables.LocalPod, allPods []*co
 	return out, nil
 }
 
-func addCiliumRule(rule *policyapi.Rule, pods []Pod, byPod map[string]*EndpointPolicySpec, policyNamespace, policyName string) error {
+func addCiliumRule(rule *policyapi.Rule, pods []Pod, frontends []*loadbalancer.Frontend, groups cidrGroupIndex, byPod map[string]*EndpointPolicySpec, policyNamespace, policyName string) error {
 	if rule == nil {
 		return nil
 	}
@@ -118,144 +121,190 @@ func addCiliumRule(rule *policyapi.Rule, pods []Pod, byPod map[string]*EndpointP
 		spec.EgressDeny = spec.EgressDeny || defaultDenyEgress
 
 		for _, ingress := range rule.Ingress {
-			allow, err := ciliumIngressRule(pod, ingress)
+			allow, ok, err := ciliumIngressRule(pod, ingress, groups)
 			if err != nil {
 				return fmt.Errorf("%s/%s ingress: %w", policyNamespace, policyName, err)
 			}
-			spec.IngressRules = append(spec.IngressRules, allow)
+			if ok {
+				spec.IngressRules = append(spec.IngressRules, allow)
+			}
 		}
 		for _, ingressDeny := range rule.IngressDeny {
-			deny, err := ciliumIngressDenyRule(pod, ingressDeny)
+			deny, ok, err := ciliumIngressDenyRule(pod, ingressDeny, groups)
 			if err != nil {
 				return fmt.Errorf("%s/%s ingressDeny: %w", policyNamespace, policyName, err)
 			}
-			spec.IngressDenyRules = append(spec.IngressDenyRules, deny)
+			if ok {
+				spec.IngressDenyRules = append(spec.IngressDenyRules, deny)
+			}
 		}
 		for _, egress := range rule.Egress {
-			allow, err := ciliumEgressRule(pod, egress)
+			allow, ok, err := ciliumEgressRule(pod, egress, frontends, groups)
 			if err != nil {
 				return fmt.Errorf("%s/%s egress: %w", policyNamespace, policyName, err)
 			}
-			spec.EgressRules = append(spec.EgressRules, allow)
+			if ok {
+				spec.EgressRules = append(spec.EgressRules, allow)
+			}
 		}
 		for _, egressDeny := range rule.EgressDeny {
-			deny, err := ciliumEgressDenyRule(pod, egressDeny)
+			deny, ok, err := ciliumEgressDenyRule(pod, egressDeny, groups)
 			if err != nil {
 				return fmt.Errorf("%s/%s egressDeny: %w", policyNamespace, policyName, err)
 			}
-			spec.EgressDenyRules = append(spec.EgressDenyRules, deny)
+			if ok {
+				spec.EgressDenyRules = append(spec.EgressDenyRules, deny)
+			}
 		}
 	}
 
 	return nil
 }
 
-func ciliumIngressRule(endpoint Pod, rule policyapi.IngressRule) (PolicyRule, error) {
+func ciliumIngressRule(endpoint Pod, rule policyapi.IngressRule, groups cidrGroupIndex) (PolicyRule, bool, error) {
 	if rule.Authentication != nil {
-		return PolicyRule{}, fmt.Errorf("authentication is not supported in no-eBPF mode")
+		return PolicyRule{}, false, fmt.Errorf("authentication is not supported in no-eBPF mode")
 	}
-	if len(rule.ICMPs) > 0 {
-		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
-	}
-	peers, err := ciliumIngressPeers(rule.IngressCommonRule)
+	peers, hasSource, err := ciliumIngressPeers(rule.IngressCommonRule, groups)
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, false, err
 	}
-	ports, matchAll, err := ciliumAllowPorts(endpoint, rule.ToPorts)
+	if hasSource && len(peers) == 0 {
+		return PolicyRule{}, false, nil
+	}
+	var ports []Port
+	var matchAll bool
+	switch {
+	case len(rule.ICMPs) > 0:
+		ports, err = ciliumICMPPorts(endpoint, rule.ICMPs)
+	case len(rule.ToPorts) > 0:
+		ports, matchAll, err = ciliumAllowPorts(endpoint, rule.ToPorts)
+	default:
+		matchAll = true
+	}
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, false, err
 	}
-	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, nil
+	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, true, nil
 }
 
-func ciliumEgressRule(endpoint Pod, rule policyapi.EgressRule) (PolicyRule, error) {
+func ciliumEgressRule(endpoint Pod, rule policyapi.EgressRule, frontends []*loadbalancer.Frontend, groups cidrGroupIndex) (PolicyRule, bool, error) {
 	if len(rule.ToFQDNs) > 0 {
-		return PolicyRule{}, fmt.Errorf("toFQDNs are not supported in no-eBPF mode")
-	}
-	if len(rule.ToServices) > 0 {
-		return PolicyRule{}, fmt.Errorf("toServices are not supported in no-eBPF mode")
-	}
-	if len(rule.ICMPs) > 0 {
-		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
+		return PolicyRule{}, true, fmt.Errorf("toFQDNs are not supported in no-eBPF mode")
 	}
 	if rule.Authentication != nil {
-		return PolicyRule{}, fmt.Errorf("authentication is not supported in no-eBPF mode")
+		return PolicyRule{}, true, fmt.Errorf("authentication is not supported in no-eBPF mode")
 	}
-	peers, err := ciliumEgressPeers(rule.EgressCommonRule)
+	var peers []Peer
+	var hasSource bool
+	var err error
+	if len(rule.ToServices) > 0 {
+		peers, err = ciliumServicePeers(rule.ToServices, frontends)
+	} else {
+		peers, hasSource, err = ciliumEgressPeers(rule.EgressCommonRule, groups)
+	}
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, true, err
 	}
-	ports, matchAll, err := ciliumAllowPorts(endpoint, rule.ToPorts)
+	if hasSource && len(peers) == 0 {
+		return PolicyRule{}, false, nil
+	}
+	if len(rule.ToServices) > 0 && len(peers) == 0 {
+		return PolicyRule{}, false, nil
+	}
+	var ports []Port
+	var matchAll bool
+	switch {
+	case len(rule.ICMPs) > 0:
+		ports, err = ciliumICMPPorts(endpoint, rule.ICMPs)
+	case len(rule.ToPorts) > 0:
+		ports, matchAll, err = ciliumAllowPorts(endpoint, rule.ToPorts)
+	default:
+		matchAll = true
+	}
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, true, err
 	}
-	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, nil
+	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, true, nil
 }
 
-func ciliumIngressDenyRule(endpoint Pod, rule policyapi.IngressDenyRule) (PolicyRule, error) {
-	if len(rule.ICMPs) > 0 {
-		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
-	}
-	peers, err := ciliumIngressPeers(rule.IngressCommonRule)
+func ciliumIngressDenyRule(endpoint Pod, rule policyapi.IngressDenyRule, groups cidrGroupIndex) (PolicyRule, bool, error) {
+	peers, hasSource, err := ciliumIngressPeers(rule.IngressCommonRule, groups)
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, false, err
 	}
-	ports, matchAll, err := ciliumDenyPorts(endpoint, rule.ToPorts)
+	if hasSource && len(peers) == 0 {
+		return PolicyRule{}, false, nil
+	}
+	var ports []Port
+	var matchAll bool
+	switch {
+	case len(rule.ICMPs) > 0:
+		ports, err = ciliumICMPPorts(endpoint, rule.ICMPs)
+	case len(rule.ToPorts) > 0:
+		ports, matchAll, err = ciliumDenyPorts(endpoint, rule.ToPorts)
+	default:
+		matchAll = true
+	}
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, false, err
 	}
-	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, nil
+	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, true, nil
 }
 
-func ciliumEgressDenyRule(endpoint Pod, rule policyapi.EgressDenyRule) (PolicyRule, error) {
-	if len(rule.ICMPs) > 0 {
-		return PolicyRule{}, fmt.Errorf("ICMP policy is not supported in no-eBPF mode")
-	}
-	peers, err := ciliumEgressPeers(rule.EgressCommonRule)
+func ciliumEgressDenyRule(endpoint Pod, rule policyapi.EgressDenyRule, groups cidrGroupIndex) (PolicyRule, bool, error) {
+	peers, hasSource, err := ciliumEgressPeers(rule.EgressCommonRule, groups)
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, false, err
 	}
-	ports, matchAll, err := ciliumDenyPorts(endpoint, rule.ToPorts)
+	if hasSource && len(peers) == 0 {
+		return PolicyRule{}, false, nil
+	}
+	var ports []Port
+	var matchAll bool
+	switch {
+	case len(rule.ICMPs) > 0:
+		ports, err = ciliumICMPPorts(endpoint, rule.ICMPs)
+	case len(rule.ToPorts) > 0:
+		ports, matchAll, err = ciliumDenyPorts(endpoint, rule.ToPorts)
+	default:
+		matchAll = true
+	}
 	if err != nil {
-		return PolicyRule{}, err
+		return PolicyRule{}, false, err
 	}
-	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, nil
+	return PolicyRule{Peers: peers, Ports: ports, MatchAllPorts: matchAll}, true, nil
 }
 
-func ciliumIngressPeers(rule policyapi.IngressCommonRule) ([]Peer, error) {
+func ciliumIngressPeers(rule policyapi.IngressCommonRule, groups cidrGroupIndex) ([]Peer, bool, error) {
 	if len(rule.FromEntities) > 0 {
-		return nil, fmt.Errorf("fromEntities are not supported in no-eBPF mode")
-	}
-	if len(rule.FromGroups) > 0 {
-		return nil, fmt.Errorf("fromGroups are not supported in no-eBPF mode")
+		return nil, false, fmt.Errorf("fromEntities are not supported in no-eBPF mode")
 	}
 	if len(rule.FromRequires) > 0 {
-		return nil, fmt.Errorf("fromRequires are not supported in no-eBPF mode")
+		return nil, false, fmt.Errorf("fromRequires are not supported in no-eBPF mode")
 	}
 	if len(rule.FromNodes) > 0 {
-		return nil, fmt.Errorf("fromNodes are not supported in no-eBPF mode")
+		return nil, false, fmt.Errorf("fromNodes are not supported in no-eBPF mode")
 	}
-	return ciliumPeers(rule.FromEndpoints, rule.FromCIDR, rule.FromCIDRSet)
+	return ciliumPeers(rule.FromEndpoints, rule.FromCIDR, rule.FromCIDRSet, rule.FromGroups, groups)
 }
 
-func ciliumEgressPeers(rule policyapi.EgressCommonRule) ([]Peer, error) {
+func ciliumEgressPeers(rule policyapi.EgressCommonRule, groups cidrGroupIndex) ([]Peer, bool, error) {
 	if len(rule.ToEntities) > 0 {
-		return nil, fmt.Errorf("toEntities are not supported in no-eBPF mode")
-	}
-	if len(rule.ToGroups) > 0 {
-		return nil, fmt.Errorf("toGroups are not supported in no-eBPF mode")
+		return nil, false, fmt.Errorf("toEntities are not supported in no-eBPF mode")
 	}
 	if len(rule.ToRequires) > 0 {
-		return nil, fmt.Errorf("toRequires are not supported in no-eBPF mode")
+		return nil, false, fmt.Errorf("toRequires are not supported in no-eBPF mode")
 	}
 	if len(rule.ToNodes) > 0 {
-		return nil, fmt.Errorf("toNodes are not supported in no-eBPF mode")
+		return nil, false, fmt.Errorf("toNodes are not supported in no-eBPF mode")
 	}
-	return ciliumPeers(rule.ToEndpoints, rule.ToCIDR, rule.ToCIDRSet)
+	return ciliumPeers(rule.ToEndpoints, rule.ToCIDR, rule.ToCIDRSet, rule.ToGroups, groups)
 }
 
-func ciliumPeers(endpointSelectors []policyapi.EndpointSelector, cidrs []policyapi.CIDR, cidrRules []policyapi.CIDRRule) ([]Peer, error) {
-	peers := make([]Peer, 0, len(endpointSelectors)+len(cidrs)+len(cidrRules))
+func ciliumPeers(endpointSelectors []policyapi.EndpointSelector, cidrs []policyapi.CIDR, cidrRules []policyapi.CIDRRule, externalGroups []policyapi.Groups, groups cidrGroupIndex) ([]Peer, bool, error) {
+	hasSource := endpointSelectors != nil || cidrs != nil || cidrRules != nil || externalGroups != nil
+	peers := make([]Peer, 0, len(endpointSelectors)+len(cidrs)+len(cidrRules)+len(externalGroups))
 	for _, sel := range endpointSelectors {
 		if sel.LabelSelector == nil {
 			peers = append(peers, Peer{})
@@ -266,29 +315,67 @@ func ciliumPeers(endpointSelectors []policyapi.EndpointSelector, cidrs []policya
 	for _, cidr := range cidrs {
 		prefix, err := netip.ParsePrefix(string(cidr))
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		peers = append(peers, Peer{IPBlock: &prefix})
 	}
 	for _, rule := range cidrRules {
-		if rule.CIDRGroupRef != "" || rule.CIDRGroupSelector.LabelSelector != nil {
-			return nil, fmt.Errorf("CIDR group selectors are not supported in no-eBPF mode")
+		excepts, err := cidrRuleExcepts(rule.ExceptCIDRs)
+		if err != nil {
+			return nil, false, err
 		}
-		prefix, err := netip.ParsePrefix(string(rule.Cidr))
+		switch {
+		case rule.CIDRGroupRef != "":
+			for _, prefix := range groups.prefixesForRef(string(rule.CIDRGroupRef)) {
+				peer := Peer{IPBlock: &prefix, Except: excepts}
+				peers = append(peers, peer)
+			}
+		case rule.CIDRGroupSelector.LabelSelector != nil:
+			for _, prefix := range groups.prefixesForSelector(selectorFromAPI(rule.CIDRGroupSelector)) {
+				peer := Peer{IPBlock: &prefix, Except: excepts}
+				peers = append(peers, peer)
+			}
+		default:
+			prefix, err := netip.ParsePrefix(string(rule.Cidr))
+			if err != nil {
+				return nil, false, err
+			}
+			peers = append(peers, Peer{IPBlock: &prefix, Except: excepts})
+		}
+	}
+	for _, group := range externalGroups {
+		prefixes, err := ciliumGroupPrefixes(group, groups)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, prefix := range prefixes {
+			peers = append(peers, Peer{IPBlock: &prefix})
+		}
+	}
+	return uniquePeers(peers), hasSource, nil
+}
+
+func ciliumGroupPrefixes(group policyapi.Groups, groups cidrGroupIndex) ([]netip.Prefix, error) {
+	selector := selectorFromAPI(group.GetAsEndpointSelector())
+	if selector == nil {
+		return nil, nil
+	}
+	return groups.prefixesForSelector(selector), nil
+}
+
+func cidrRuleExcepts(excepts []policyapi.CIDR) ([]netip.Prefix, error) {
+	if len(excepts) == 0 {
+		return nil, nil
+	}
+	out := make([]netip.Prefix, 0, len(excepts))
+	for _, except := range excepts {
+		prefix, err := netip.ParsePrefix(string(except))
 		if err != nil {
 			return nil, err
 		}
-		peer := Peer{IPBlock: &prefix}
-		for _, except := range rule.ExceptCIDRs {
-			ex, err := netip.ParsePrefix(string(except))
-			if err != nil {
-				return nil, err
-			}
-			peer.Except = append(peer.Except, ex)
-		}
-		peers = append(peers, peer)
+		out = append(out, prefix)
 	}
-	return peers, nil
+	return out, nil
 }
 
 func ciliumAllowPorts(endpoint Pod, portRules []policyapi.PortRule) ([]Port, bool, error) {
@@ -340,6 +427,21 @@ func ciliumDenyPorts(endpoint Pod, portRules []policyapi.PortDenyRule) ([]Port, 
 	return out, false, nil
 }
 
+func ciliumICMPPorts(endpoint Pod, rules policyapi.ICMPRules) ([]Port, error) {
+	var out []Port
+	for _, rule := range rules {
+		for _, field := range rule.Fields {
+			pp := field.PortProtocol()
+			ports, err := ciliumPortsFromPortProtocol(endpoint, *pp)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, ports...)
+		}
+	}
+	return out, nil
+}
+
 func ciliumPortsFromPortProtocol(endpoint Pod, pp policyapi.PortProtocol) ([]Port, error) {
 	protocols, err := ciliumProtocols(pp.Protocol)
 	if err != nil {
@@ -374,9 +476,89 @@ func ciliumProtocols(proto policyapi.L4Proto) ([]Protocol, error) {
 		return []Protocol{ProtocolUDP}, nil
 	case policyapi.ProtoSCTP:
 		return []Protocol{ProtocolSCTP}, nil
+	case policyapi.ProtoICMP:
+		return []Protocol{ProtocolICMP}, nil
+	case policyapi.ProtoICMPv6:
+		return []Protocol{ProtocolICMPv6}, nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", proto)
 	}
+}
+
+func ciliumServicePeers(services []policyapi.Service, frontends []*loadbalancer.Frontend) ([]Peer, error) {
+	if len(services) > 0 && frontends == nil {
+		return nil, fmt.Errorf("toServices requires the no-eBPF service backend")
+	}
+	var peers []Peer
+	for _, service := range services {
+		for _, frontend := range matchingFrontendsForService(service, frontends) {
+			for backend := range frontend.Backends {
+				if backend == nil || backend.State != loadbalancer.BackendStateActive {
+					continue
+				}
+				addr := backend.Address.Addr()
+				prefix := netip.PrefixFrom(addr, addr.BitLen())
+				peers = append(peers, Peer{IPBlock: &prefix})
+			}
+		}
+	}
+	return uniquePeers(peers), nil
+}
+
+func matchingFrontendsForService(service policyapi.Service, frontends []*loadbalancer.Frontend) []*loadbalancer.Frontend {
+	var out []*loadbalancer.Frontend
+	for _, frontend := range frontends {
+		if frontend == nil || frontend.Service == nil {
+			continue
+		}
+		switch {
+		case service.K8sService != nil:
+			if service.K8sService.ServiceName != frontend.Service.Name.Name() {
+				continue
+			}
+			if service.K8sService.Namespace != "" && service.K8sService.Namespace != frontend.Service.Name.Namespace() {
+				continue
+			}
+			out = append(out, frontend)
+		case service.K8sServiceSelector != nil:
+			if service.K8sServiceSelector.Namespace != "" && service.K8sServiceSelector.Namespace != frontend.Service.Name.Namespace() {
+				continue
+			}
+			if !selectorMatches(serviceLabels(frontend.Service), selectorFromAPI(policyapi.EndpointSelector(service.K8sServiceSelector.Selector))) {
+				continue
+			}
+			out = append(out, frontend)
+		}
+	}
+	return out
+}
+
+func serviceLabels(svc *loadbalancer.Service) map[string]string {
+	if svc == nil || len(svc.Labels) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(svc.Labels))
+	for k, v := range svc.Labels {
+		out[k] = v.Value
+	}
+	return out
+}
+
+func uniquePeers(in []Peer) []Peer {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]Peer, 0, len(in))
+	for _, peer := range in {
+		key := peer.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, peer)
+	}
+	return out
 }
 
 func resolveCiliumNamedPorts(endpoint Pod, name string, protocols []Protocol) []Port {

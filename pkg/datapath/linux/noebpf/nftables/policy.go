@@ -11,6 +11,10 @@ import (
 	metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 )
 
+const (
+	cidrGroupLabelSource = "cidrgroup"
+)
+
 // PolicyProtocol is the L4 protocol supported by the no-eBPF KNP renderer.
 type PolicyProtocol = Protocol
 
@@ -41,6 +45,25 @@ type Peer struct {
 	NamespaceSelector *LabelSelector
 	IPBlock           *netip.Prefix
 	Except            []netip.Prefix
+}
+
+func (p Peer) String() string {
+	switch {
+	case p.IPBlock != nil:
+		excepts := make([]string, 0, len(p.Except))
+		for _, ex := range p.Except {
+			excepts = append(excepts, ex.String())
+		}
+		sort.Strings(excepts)
+		if len(excepts) == 0 {
+			return p.IPBlock.String()
+		}
+		return p.IPBlock.String() + "-" + strings.Join(excepts, ",")
+	case p.PodSelector != nil || p.NamespaceSelector != nil:
+		return selectorString(p.PodSelector) + "|" + selectorString(p.NamespaceSelector)
+	default:
+		return "*"
+	}
 }
 
 // Port selects an allowed L4 port. Protocol defaults to TCP when empty.
@@ -306,7 +329,7 @@ func stripLabelSourcePrefix(key string) (string, bool) {
 		return "", false
 	}
 	switch source {
-	case "k8s", "any", "reserved":
+	case "k8s", "any", "reserved", cidrGroupLabelSource:
 		return remainder, true
 	default:
 		return "", false
@@ -331,6 +354,21 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func selectorString(selector *LabelSelector) string {
+	if selector == nil {
+		return ""
+	}
+	keys := make([]string, 0, len(selector.MatchLabels)+len(selector.MatchExpressions))
+	for k, v := range selector.MatchLabels {
+		keys = append(keys, k+"="+v)
+	}
+	for _, expr := range selector.MatchExpressions {
+		keys = append(keys, expr.Key+":"+string(expr.Operator))
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }
 
 func subtractExcept(block netip.Prefix, except []netip.Prefix) []netip.Prefix {

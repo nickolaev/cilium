@@ -43,6 +43,7 @@ type controllerParams struct {
 	NetworkPolicies                  resource.Resource[*networkingv1.NetworkPolicy]              `optional:"true"`
 	CiliumNetworkPolicies            resource.Resource[*ciliumv2.CiliumNetworkPolicy]            `optional:"true"`
 	CiliumClusterwideNetworkPolicies resource.Resource[*ciliumv2.CiliumClusterwideNetworkPolicy] `optional:"true"`
+	CiliumCIDRGroups                 resource.Resource[*ciliumv2.CiliumCIDRGroup]                `optional:"true"`
 	AllPods                          resource.Resource[*corev1.Pod]                              `optional:"true"`
 }
 
@@ -60,11 +61,13 @@ func registerController(p controllerParams) {
 		networkPolicies:                  p.NetworkPolicies,
 		ciliumNetworkPolicies:            p.CiliumNetworkPolicies,
 		ciliumClusterwideNetworkPolicies: p.CiliumClusterwideNetworkPolicies,
+		cidrGroups:                       p.CiliumCIDRGroups,
 		allPods:                          p.AllPods,
 		runner:                           CommandRunner{},
 		policyCache:                      map[resource.Key]*networkingv1.NetworkPolicy{},
 		cnpCache:                         map[resource.Key]*ciliumv2.CiliumNetworkPolicy{},
 		ccnpCache:                        map[resource.Key]*ciliumv2.CiliumClusterwideNetworkPolicy{},
+		cidrGroupCache:                   map[resource.Key]*ciliumv2.CiliumCIDRGroup{},
 		podCache:                         map[resource.Key]*corev1.Pod{},
 	}
 	p.JobGroup.Add(job.OneShot("noebpf-nftables-reconciler", c.run))
@@ -80,10 +83,12 @@ type controller struct {
 	networkPolicies                  resource.Resource[*networkingv1.NetworkPolicy]
 	ciliumNetworkPolicies            resource.Resource[*ciliumv2.CiliumNetworkPolicy]
 	ciliumClusterwideNetworkPolicies resource.Resource[*ciliumv2.CiliumClusterwideNetworkPolicy]
+	cidrGroups                       resource.Resource[*ciliumv2.CiliumCIDRGroup]
 	allPods                          resource.Resource[*corev1.Pod]
 	policyCache                      map[resource.Key]*networkingv1.NetworkPolicy
 	cnpCache                         map[resource.Key]*ciliumv2.CiliumNetworkPolicy
 	ccnpCache                        map[resource.Key]*ciliumv2.CiliumClusterwideNetworkPolicy
+	cidrGroupCache                   map[resource.Key]*ciliumv2.CiliumCIDRGroup
 	podCache                         map[resource.Key]*corev1.Pod
 	runner                           Runner
 }
@@ -107,12 +112,16 @@ func (c *controller) run(ctx context.Context, health cell.Health) error {
 	if option.Config.EnableNoEBPFNetworkPolicy && c.ciliumClusterwideNetworkPolicies != nil {
 		ccnpEvents = c.ciliumClusterwideNetworkPolicies.Events(ctx)
 	}
+	var cidrGroupEvents <-chan resource.Event[*ciliumv2.CiliumCIDRGroup]
+	if option.Config.EnableNoEBPFNetworkPolicy && c.cidrGroups != nil {
+		cidrGroupEvents = c.cidrGroups.Events(ctx)
+	}
 	var podEvents <-chan resource.Event[*corev1.Pod]
 	if option.Config.EnableNoEBPFNetworkPolicy && c.allPods != nil {
 		podEvents = c.allPods.Events(ctx)
 	}
 	if option.Config.EnableNoEBPFNetworkPolicy {
-		if err := c.waitPolicyInputsInitialized(ctx, health, policyEvents, cnpEvents, ccnpEvents, podEvents); err != nil {
+		if err := c.waitPolicyInputsInitialized(ctx, health, policyEvents, cnpEvents, ccnpEvents, cidrGroupEvents, podEvents); err != nil {
 			return err
 		}
 	}
@@ -156,6 +165,12 @@ func (c *controller) run(ctx context.Context, health cell.Health) error {
 				continue
 			}
 			c.handleCCNPEvent(ev)
+		case ev, ok := <-cidrGroupEvents:
+			if !ok {
+				cidrGroupEvents = nil
+				continue
+			}
+			c.handleCIDRGroupEvent(ev)
 		}
 	}
 }
@@ -174,7 +189,7 @@ func (c *controller) waitTableInitialized(ctx context.Context, health cell.Healt
 	return nil
 }
 
-func (c *controller) waitPolicyInputsInitialized(ctx context.Context, health cell.Health, policyEvents <-chan resource.Event[*networkingv1.NetworkPolicy], cnpEvents <-chan resource.Event[*ciliumv2.CiliumNetworkPolicy], ccnpEvents <-chan resource.Event[*ciliumv2.CiliumClusterwideNetworkPolicy], podEvents <-chan resource.Event[*corev1.Pod]) error {
+func (c *controller) waitPolicyInputsInitialized(ctx context.Context, health cell.Health, policyEvents <-chan resource.Event[*networkingv1.NetworkPolicy], cnpEvents <-chan resource.Event[*ciliumv2.CiliumNetworkPolicy], ccnpEvents <-chan resource.Event[*ciliumv2.CiliumClusterwideNetworkPolicy], cidrGroupEvents <-chan resource.Event[*ciliumv2.CiliumCIDRGroup], podEvents <-chan resource.Event[*corev1.Pod]) error {
 	if c.pods == nil || c.namespaces == nil || c.networkPolicies == nil || c.allPods == nil {
 		return fmt.Errorf("no-eBPF NetworkPolicy backend requires local pods, namespaces, all pods, and NetworkPolicy resources")
 	}
@@ -188,8 +203,9 @@ func (c *controller) waitPolicyInputsInitialized(ctx context.Context, health cel
 	policiesSynced := false
 	cnpSynced := c.ciliumNetworkPolicies == nil
 	ccnpSynced := c.ciliumClusterwideNetworkPolicies == nil
+	cidrGroupsSynced := c.cidrGroups == nil
 	podsSynced := false
-	for !policiesSynced || !podsSynced || !cnpSynced || !ccnpSynced {
+	for !policiesSynced || !podsSynced || !cnpSynced || !ccnpSynced || !cidrGroupsSynced {
 		health.OK("Waiting for no-eBPF nftables policy resources to synchronize")
 		select {
 		case <-ctx.Done():
@@ -218,6 +234,14 @@ func (c *controller) waitPolicyInputsInitialized(ctx context.Context, health cel
 				ccnpSynced = true
 			}
 			c.handleCCNPEvent(ev)
+		case ev, ok := <-cidrGroupEvents:
+			if !ok {
+				return fmt.Errorf("CiliumCIDRGroup resource closed before synchronization")
+			}
+			if ev.Kind == resource.Sync {
+				cidrGroupsSynced = true
+			}
+			c.handleCIDRGroupEvent(ev)
 		case ev, ok := <-podEvents:
 			if !ok {
 				return fmt.Errorf("Pod resource closed before synchronization")
@@ -269,6 +293,7 @@ func (c *controller) reconcile(ctx context.Context) (tableWatches, error) {
 		c.cachedNetworkPolicies(),
 		c.cachedCNPs(),
 		c.cachedCCNPs(),
+		c.cachedCIDRGroups(),
 		option.Config.EnableNoEBPFServices,
 		option.Config.EnableNoEBPFNetworkPolicy,
 	)
@@ -317,6 +342,18 @@ func (c *controller) handleCCNPEvent(ev resource.Event[*ciliumv2.CiliumClusterwi
 	ev.Done(err)
 }
 
+func (c *controller) handleCIDRGroupEvent(ev resource.Event[*ciliumv2.CiliumCIDRGroup]) {
+	var err error
+	switch ev.Kind {
+	case resource.Upsert:
+		c.cidrGroupCache[ev.Key] = ev.Object
+	case resource.Delete:
+		delete(c.cidrGroupCache, ev.Key)
+	case resource.Sync:
+	}
+	ev.Done(err)
+}
+
 func (c *controller) handlePodEvent(ev resource.Event[*corev1.Pod]) {
 	var err error
 	switch ev.Kind {
@@ -353,6 +390,14 @@ func (c *controller) cachedCCNPs() []*ciliumv2.CiliumClusterwideNetworkPolicy {
 	return policies
 }
 
+func (c *controller) cachedCIDRGroups() []*ciliumv2.CiliumCIDRGroup {
+	groups := make([]*ciliumv2.CiliumCIDRGroup, 0, len(c.cidrGroupCache))
+	for _, group := range c.cidrGroupCache {
+		groups = append(groups, group)
+	}
+	return groups
+}
+
 func (c *controller) cachedPods() []*corev1.Pod {
 	pods := make([]*corev1.Pod, 0, len(c.podCache))
 	for _, pod := range c.podCache {
@@ -361,7 +406,7 @@ func (c *controller) cachedPods() []*corev1.Pod {
 	return pods
 }
 
-func desiredState(frontends []*loadbalancer.Frontend, localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, networkPolicies []*networkingv1.NetworkPolicy, cnpPolicies []*ciliumv2.CiliumNetworkPolicy, ccnpPolicies []*ciliumv2.CiliumClusterwideNetworkPolicy, enableServices, enableNetworkPolicy bool) (DesiredState, error) {
+func desiredState(frontends []*loadbalancer.Frontend, localPods []k8sTables.LocalPod, allPods []*corev1.Pod, namespaces []k8sTables.Namespace, networkPolicies []*networkingv1.NetworkPolicy, cnpPolicies []*ciliumv2.CiliumNetworkPolicy, ccnpPolicies []*ciliumv2.CiliumClusterwideNetworkPolicy, cidrGroups []*ciliumv2.CiliumCIDRGroup, enableServices, enableNetworkPolicy bool) (DesiredState, error) {
 	var state DesiredState
 	if enableServices {
 		services, err := ServicesFromFrontends(frontends)
@@ -376,12 +421,12 @@ func desiredState(frontends []*loadbalancer.Frontend, localPods []k8sTables.Loca
 			return DesiredState{}, err
 		}
 		state.Policies = policies
-		cnpPoliciesOut, err := PoliciesFromCiliumNetworkPolicies(localPods, allPods, namespaces, cnpPolicies)
+		cnpPoliciesOut, err := PoliciesFromCiliumNetworkPolicies(localPods, allPods, namespaces, frontends, cidrGroups, cnpPolicies)
 		if err != nil {
 			return DesiredState{}, err
 		}
 		state.Policies = append(state.Policies, cnpPoliciesOut...)
-		ccnpPoliciesOut, err := PoliciesFromCiliumClusterwideNetworkPolicies(localPods, allPods, namespaces, ccnpPolicies)
+		ccnpPoliciesOut, err := PoliciesFromCiliumClusterwideNetworkPolicies(localPods, allPods, namespaces, frontends, cidrGroups, ccnpPolicies)
 		if err != nil {
 			return DesiredState{}, err
 		}
